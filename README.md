@@ -2,7 +2,7 @@
 
 Working first milestone for Century High School volleyball and TVVC. The original handoff is preserved in [Project_Brief.md](Project_Brief.md).
 
-**Local simulation only.** No live payment processor, email transport, production webhook, or background delivery service is connected. The server listens on loopback. Sample athletes, contacts, administrator credentials, donations, fees, and emails are fictional. Do not deploy this local prototype or enter real donor/minor information.
+**Review simulation only.** No live payment processor, email transport, production webhook, or background delivery service is connected. Sample athletes, contacts, administrator identities, donations, fees, and emails are fictional. Use fictional donor/minor information only. The local server listens on loopback; the Netlify review deployment uses a hosted API and separate transactional database.
 
 ## Run locally
 
@@ -61,12 +61,26 @@ The landing page provides the demo organization selector. Login uses scrypt-hash
 
 Only `confirmed` ledger entries contribute to totals; `pending`, `rejected`, and `refunded` do not. Known fees are shown independently. Known net is a subtotal of entries with known fees; unknown fees are not silently treated as zero. Athlete attribution changes fundraising credit, never the organization receiving money.
 
+## Hosted review on Netlify
+
+The review site is https://volleyball-fundraiser.netlify.app/. `netlify.toml` builds Vite assets, bundles the API function and serves direct app links. `netlify/functions/api.mjs` runs the existing Express/domain API. Netlify Database provisions Postgres and applies the committed migration on deploy. Database compute/bandwidth/storage may consume account credits; no plan upgrade is performed by this project.
+
+Hosted administrators use the same two fictional email identities as the local demo, with a private owner review password. The published `prototype-only` password is rejected on the hosted site. Run `npm run configure:review` with the authenticated Windows Netlify CLI to configure the function-only secret. Credentials are saved in ignored `.local/hosted-review-credentials.json`; do not commit/share this file publicly. Other systems can set `NETLIFY_CLI_ENTRY` to the CLI's `bin/run.js`. Changing the password requires a redeploy and revokes prior hosted sessions.
+
+The hosted database starts from fresh sample data, without uploading `.local` files. Its state persists between function invocations and deployments. All mutations, idempotency records and hashed sessions commit under a Postgres row lock. Responses and cookies are returned only after commit; a failed commit returns a retryable error. Origin checks require a trusted HTTPS Netlify URL, and administrator cookies are Secure/HttpOnly/SameSite=Strict. Unconfigured storage or review access fails closed.
+
+This is an owner-operated review environment, not a public sandbox: the owner password gives access to both fictional administrator identities. Public sample pages and simulated donor controls are publicly reachable. Never enter real donor contacts or minor information. Hosted previews use isolated database branches, which may initially copy review data; all review data must stay fictional.
+
+For this milestone, a single JSONB snapshot transaction intentionally retains the tested domain model. It serializes requests and embeds uploaded images, so it is appropriate for a small review dataset, not a scaled fundraising launch. Production still needs normalized ledger/outbox constraints, private media storage, real administrator provisioning/recovery, and operational retention/backup controls. Platform requests/responses have size limits; use small review photos. Email workers remain explicit simulator controls, without cron or delivery credentials.
+
+After local checks, commit and push to `main` for the connected Netlify build. Verify the deployed commit, API JSON, login, direct private/public links and simulated transactions before sharing. Keep `.netlify/`, `.local/`, secrets and generated test artifacts out of Git.
+
 ## Data and architecture
 
 - React/Vite frontend; Express Node server; pure domain functions in `server/domain.js`.
 - All amounts use integer cents. Campaign scheduling compares calendar dates in the configured IANA timezone, including DST.
 - `.local/snapshot.json` atomically stores local demo data, idempotency records, and issued demo capabilities for authenticated coach review. It is ignored by Git. Private invitation hashes are held in the state; capability URLs appear only to the authenticated administrator/owning athlete, not in activity logs. Earlier prototype `state.json`/`private-links.json` files are migrated on first start and preserved as original local backups.
-- Synchronous mutations are rolled back on errors; the single snapshot uses atomic replacement with bounded retries for temporary Windows file locks. This is a **single-process prototype store**, not a production database. Do not run multiple server writers. Protect the local folder as private; no encryption-at-rest or production backup/retention service is provided.
+- Local synchronous mutations are rolled back on errors; the local snapshot uses atomic replacement with bounded retries for temporary Windows file locks. This is a **single-process local store**. Do not run multiple local server writers. Hosted requests use the separate transactional Postgres store. Protect the local folder as private; no production backup/retention service is provided.
 - No donor information or private invitation URLs are persisted in browser localStorage. A receipt token alone is held in sessionStorage for same-tab donor resumption. Other athletes see only contacts they themselves submitted. Public API responses contain no private contacts, invitation hashes, payment capabilities, or ledger/audit details.
 - Message bodies with donor-choice/opt-out capabilities are accessible only to the authenticated coach in preview mode. Application activity logs use masked addresses and contain no private setup tokens. Browser tracing is disabled to avoid recording capabilities.
 - API contract: [docs/API_Contract.md](docs/API_Contract.md). Review checks: [docs/Verification.md](docs/Verification.md). Live needs: [docs/Live_Launch_Checklist.md](docs/Live_Launch_Checklist.md).

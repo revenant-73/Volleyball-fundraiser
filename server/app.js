@@ -12,13 +12,22 @@ import {
   ledgerCSV,
 } from './domain.js';
 
-export function createApp({ directory = null, seed = null, writeStore = writeSnapshot } = {}) {
+export function createApp({
+  directory = null,
+  seed = null,
+  writeStore = writeSnapshot,
+  hosted = false,
+  allowedOrigins = [],
+  staticFiles = true,
+} = {}) {
   let state;
   let links = {};
+  let auth = seed?.auth;
   if (directory && existsSync(path.join(directory, 'snapshot.json'))) {
     const saved = JSON.parse(readFileSync(path.join(directory, 'snapshot.json'), 'utf8'));
     state = saved.state;
     links = saved.links;
+    auth = saved.auth;
   } else if (directory && existsSync(path.join(directory, 'state.json'))) {
     state = JSON.parse(readFileSync(path.join(directory, 'state.json'), 'utf8'));
     links = JSON.parse(readFileSync(path.join(directory, 'private-links.json'), 'utf8'));
@@ -28,14 +37,22 @@ export function createApp({ directory = null, seed = null, writeStore = writeSna
     links = sample.links;
   }
   const service = new Fundraiser(state);
-  const sessions = new Map();
-  const attempts = new Map();
+  const sessions = new Map(auth?.sessions || []);
+  const attempts = new Map(auth?.attempts || []);
+  for (const [key, session] of sessions) if (session.expires < Date.now()) sessions.delete(key);
+  for (const [key, attempt] of attempts)
+    if (attempt.start < Date.now() - 60000) attempts.delete(key);
+  const snapshot = () => ({
+    state: service.state,
+    links,
+    auth: { sessions: [...sessions], attempts: [...attempts] },
+  });
   let lastWritten;
   const persist = () => {
     if (!directory) return;
     mkdirSync(directory, { recursive: true });
     // Keep ledger, idempotency and private capabilities in one atomic snapshot.
-    const serialized = JSON.stringify({ state: service.state, links }, null, 2);
+    const serialized = JSON.stringify(snapshot(), null, 2);
     if (serialized === lastWritten) return;
     writeStore(directory, serialized);
     lastWritten = serialized;
@@ -48,6 +65,7 @@ export function createApp({ directory = null, seed = null, writeStore = writeSna
       'Referrer-Policy': 'no-referrer',
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY',
+      'X-Robots-Tag': 'noindex, nofollow',
       'Cache-Control': 'no-store',
       'Content-Security-Policy':
         "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
@@ -59,13 +77,17 @@ export function createApp({ directory = null, seed = null, writeStore = writeSna
       const webPort = process.env.PROTOTYPE_WEB_PORT || 5173;
       const apiPort = process.env.PROTOTYPE_API_PORT || 3100;
       if (
-        origin &&
-        ![
-          `http://127.0.0.1:${webPort}`,
-          `http://localhost:${webPort}`,
-          `http://127.0.0.1:${apiPort}`,
-          `http://localhost:${apiPort}`,
-        ].includes(origin)
+        (hosted && !origin) ||
+        (origin &&
+          ![
+            ...allowedOrigins,
+            `http://127.0.0.1:${webPort}`,
+            `http://localhost:${webPort}`,
+            `http://127.0.0.1:${apiPort}`,
+            `http://localhost:${apiPort}`,
+          ]
+            .filter((value) => !hosted || value.startsWith('https://'))
+            .includes(origin))
       )
         return res.status(403).json({ error: 'Origin not allowed.' });
     }
@@ -88,6 +110,7 @@ export function createApp({ directory = null, seed = null, writeStore = writeSna
     const mutation = req.method !== 'GET';
     const previous = mutation ? structuredClone(service.state) : null;
     const oldLinks = mutation ? structuredClone(links) : null;
+    const oldSessions = mutation ? structuredClone([...sessions]) : null;
     try {
       const result = fn(req, res);
       if (mutation) persist();
@@ -96,11 +119,18 @@ export function createApp({ directory = null, seed = null, writeStore = writeSna
       if (mutation) {
         service.state = previous;
         links = oldLinks;
+        sessions.clear();
+        for (const [key, value] of oldSessions) sessions.set(key, value);
+        if (!res.headersSent) res.removeHeader('Set-Cookie');
       }
       next(err);
     }
   };
   const detail = (req) => service.detail(req.session.orgId, req.params.id, links);
+  app.get(
+    '/api/runtime',
+    route(() => ({ hosted, simulation: true })),
+  );
   app.get(
     '/api/examples',
     route(() => ({
@@ -114,7 +144,7 @@ export function createApp({ directory = null, seed = null, writeStore = writeSna
   app.post(
     '/api/login',
     route((req, res) => {
-      const key = req.ip;
+      const key = hash(req.ip || 'unknown');
       const attempt = attempts.get(key) || { count: 0, start: Date.now() };
       if (Date.now() - attempt.start > 60000) {
         attempt.count = 0;
@@ -132,6 +162,7 @@ export function createApp({ directory = null, seed = null, writeStore = writeSna
         sameSite: 'strict',
         maxAge: 8 * 60 * 60 * 1000,
         path: '/',
+        secure: hosted,
       });
       return { organization: service.organization(session.orgId) };
     }),
@@ -145,7 +176,7 @@ export function createApp({ directory = null, seed = null, writeStore = writeSna
         .find((s) => s.startsWith('rally_session='))
         ?.slice('rally_session='.length);
       sessions.delete(hash(raw || ''));
-      res.clearCookie('rally_session', { path: '/' });
+      res.clearCookie('rally_session', { path: '/', secure: hosted, sameSite: 'strict' });
       return { success: true };
     }),
   );
@@ -328,7 +359,7 @@ export function createApp({ directory = null, seed = null, writeStore = writeSna
   );
   app.use('/api', (req, res) => res.status(404).json({ error: 'API route not found.' }));
   const dist = path.resolve('dist');
-  if (existsSync(dist)) {
+  if (staticFiles && existsSync(dist)) {
     app.use(express.static(dist, { index: false }));
     app.get('/{*path}', (req, res) => res.sendFile(path.join(dist, 'index.html')));
   }
@@ -346,5 +377,5 @@ export function createApp({ directory = null, seed = null, writeStore = writeSna
       .status(err.status || 500)
       .json({ error: err.status ? err.message : 'Unexpected local server error.' });
   });
-  return { app, service, persist };
+  return { app, service, persist, snapshot };
 }

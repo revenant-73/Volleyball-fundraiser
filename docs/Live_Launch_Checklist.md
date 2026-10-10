@@ -1,6 +1,6 @@
 # Before connecting live services
 
-Milestone one is a local prototype. This list is a launch gate, not a claim that legal, school, provider, payment, or authorization requirements have been verified.
+Milestone one is a local and hosted review prototype, with simulated payments/email only. This list gates live fundraising, not review hosting. It does not claim that legal, school, provider, payment, or authorization requirements have been verified. The hosted owner password and transactional snapshot support review; they do not complete production administrator provisioning, media, ledger/outbox, retention or recovery requirements.
 
 ## Organization configuration
 

@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, readFileSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import { writeSnapshot } from '../server/store.js';
 import { createApp } from '../server/app.js';
-import { createSeed } from '../server/domain.js';
+import { createSeed, hash } from '../server/domain.js';
 function folder(t) {
   const directory = mkdtempSync(path.resolve('.local-test-'));
   t.after(() => {
@@ -50,7 +50,6 @@ test('failed persistence rolls back both invitation hash and capability; restart
       writeSnapshot(dir, data);
     },
   });
-  const before = readFileSync(path.join(directory, 'snapshot.json'), 'utf8');
   const c = service.state.campaigns.find((c) => c.orgId === 'tvvc');
   const athlete = service.state.athletes.find((a) => a.campaignId === c.id);
   const originalHash = athlete.inviteHash;
@@ -65,6 +64,7 @@ test('failed persistence rolls back both invitation hash and capability; restart
     body: JSON.stringify({ email: 'coach@tvvc.example', password: 'prototype-only' }),
   });
   const cookie = login.headers.get('set-cookie').split(';')[0];
+  const before = hash(readFileSync(path.join(directory, 'snapshot.json'), 'utf8'));
   block = true;
   const failed = await fetch(`${base}/api/admin/campaigns/${c.id}/athletes/${athlete.id}/invite`, {
     method: 'POST',
@@ -73,7 +73,7 @@ test('failed persistence rolls back both invitation hash and capability; restart
   });
   assert.equal(failed.status, 500);
   assert.equal(service.state.athletes.find((a) => a.id === athlete.id).inviteHash, originalHash);
-  assert.equal(readFileSync(path.join(directory, 'snapshot.json'), 'utf8'), before);
+  assert.equal(hash(readFileSync(path.join(directory, 'snapshot.json'), 'utf8')), before);
   const restarted = createApp({ directory });
   assert.equal(
     restarted.service.state.athletes.find((a) => a.id === athlete.id).inviteHash,

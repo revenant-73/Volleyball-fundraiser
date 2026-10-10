@@ -237,10 +237,14 @@ function Share({ path, title, organization }) {
   );
 }
 function Login({ onLogin }) {
+  const { data: runtime } = useResource('/api/runtime');
   const [email, setEmail] = useState('coach@tvvc.example'),
-    [password, setPassword] = useState('prototype-only'),
+    [password, setPassword] = useState(''),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (runtime && !runtime.hosted) setPassword('prototype-only');
+  }, [runtime?.hosted]);
   return (
     <form
       className="login-form"
@@ -266,13 +270,17 @@ function Login({ onLogin }) {
         </select>
       </Field>
       <Field
-        label="Demo password"
+        label={runtime?.hosted ? 'Review password' : 'Demo password'}
         type="password"
         autoComplete="current-password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
       />
-      <small>Local demo password: prototype-only</small>
+      <small>
+        {runtime?.hosted
+          ? 'Use the private review password supplied by the project owner.'
+          : 'Local demo password: prototype-only'}
+      </small>
       <Notice kind="error">{error}</Notice>
       <button disabled={busy}>{busy ? 'Signing in…' : 'Open administration →'}</button>
     </form>
@@ -310,7 +318,10 @@ function Home() {
         <div>
           <div className="eyebrow">Explore the prototype</div>
           <h2>Find your rally.</h2>
-          <p>Sample campaigns start in preparation. Coaches launch them in the local simulator.</p>
+          <p>
+            Sample campaigns start in preparation. Coaches launch them in the simulator. Use
+            fictional contacts and athlete information only.
+          </p>
           <Notice kind="error">{error}</Notice>
           {data?.campaigns.map((c) => (
             <Link className="campaign-link" href={`/c/${c.slug}`} key={c.slug}>
@@ -2518,8 +2529,8 @@ export default function App() {
     <>
       <div className="prototype-banner">
         <span className="sim-dot" />
-        <strong>LOCAL PROTOTYPE</strong>
-        <span>Payments & email delivery are simulated. No real charges or sends.</span>
+        <strong>REVIEW PROTOTYPE</strong>
+        <span>Payments & email delivery are simulated. Use fictional data only.</span>
       </div>
       <header className="site-header">
         <Link className="brand" href="/" aria-label="Rally Fund home">
