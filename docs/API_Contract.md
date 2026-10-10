@@ -1,4 +1,6 @@
-# Local API contract
+# Prototype API contract
+
+The same API serves local and Netlify hosted review. Hosted mutations require a trusted HTTPS Origin as well as `X-Prototype: local` (the simulation marker is not authentication). GET `/api/runtime` returns `{hosted,simulation:true}`. Hosted admin credentials use a private function-only review password, not the local demo password below. Hosted sessions, ledger and retry records persist transactionally in Postgres; login cookies are Secure/HttpOnly/SameSite=Strict. No live payment or email adapters exist.
 
 All money values returned by API are cents; UI displays dollars. Amount/fee input accepts dollars as numbers or strings. All mutations require header `X-Prototype: local`. Admin session cookie set on login, credentials same-origin. JSON errors `{error}` with 4xx. Tokens in URL paths only for private athlete onboarding and opt-out/donor-choice capabilities; never log them. Initial sample campaigns draft. Every admin response scoped to authenticated org. Clock is per campaign with `now` ISO timestamp, used for prototype scheduler only.
 

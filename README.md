@@ -75,6 +75,8 @@ For this milestone, a single JSONB snapshot transaction intentionally retains th
 
 After local checks, commit and push to `main` for the connected Netlify build. Verify the deployed commit, API JSON, login, direct private/public links and simulated transactions before sharing. Keep `.netlify/`, `.local/`, secrets and generated test artifacts out of Git.
 
+Run `node scripts/verify-hosted-review.mjs` to exercise the hosted review with a real Chromium window, a 390px viewport and simultaneous requests. It reads the ignored credentials file, creates fictional verification data, and closes its own test campaign. Results/screenshots go under ignored `artifacts/hosted-review/`. It preserves the seeded review campaigns. This is hosted API/browser verification, not physical-device testing. Use Git deployment for the hosted API: the first standalone CLI draft provisioned a database but lacked runtime connection configuration.
+
 ## Data and architecture
 
 - React/Vite frontend; Express Node server; pure domain functions in `server/domain.js`.

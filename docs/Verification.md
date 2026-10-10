@@ -7,7 +7,7 @@ Verified locally on 2026-10-09 (Pacific time), Node 22.14.0 / Windows. All data 
 | Check | Result |
 | --- | --- |
 | `npm test` | **39 passed**, zero failures: domain transitions, API authorization, local snapshot/idempotency restart checks, simulated Windows failures, and hosted Postgres transaction/cold-request tests |
-| `npm run test:e2e` | **7 passed**, zero failures: Chromium desktop and 390×844 browser flows |
+| `npm run test:e2e` | **8 passed**, zero failures: Chromium desktop and 390×844 browser flows, including reordered hosted JSON payment settings |
 | `npm run build` | Passed; Vite production assets generated |
 | `npm run format:check` | Passed; JavaScript, JSX, CSS, scripts and configuration use consistent Prettier formatting |
 | `node --check` on server/domain, server/app and dev launcher | Passed |
@@ -55,6 +55,8 @@ Live Stripe webhook/settlement, Venmo/school/check matching, real email transpor
 
 Local hosted tests use Netlify's in-memory Postgres-compatible emulator with the actual migration and HTTP adapter. They verify secure cookies, session continuity/revocation across fresh app instances, hosted-password replacement, persistent login throttling, organization isolation, public/private access, donation/event idempotency, pending reconciliation, and rollback on failed commit. This emulator is not a real concurrent Postgres load test.
 
-The initial CLI preview deployed successfully and applied its database migration, with working direct page routes. Its API failed closed with `MissingDatabaseConnectionError` because runtime connection configuration was absent. Git-connected deployment and hosted flow verification remain pending at this checkpoint. No live payment/email service was enabled and no local review data was uploaded.
+The initial CLI preview deployed successfully and applied its database migration, with working direct page routes. Its API failed closed with `MissingDatabaseConnectionError` because runtime connection configuration was absent. The Git-connected production review deployment provisioned the correct runtime connection and now serves the API. Use Git deployment for this site; standalone CLI draft database connectivity remains unverified.
+
+Hosted API verification passed authentication, HTTPS cookie/session continuity, organization scoping, launch deduplication, pending reports and suppression/pause/resume. Six simultaneous identical donation requests and six repeated payment events yielded one ledger entry, one audit confirmation and one thank-you against real hosted Postgres. Browser review found JSONB key reordering changed the default payment method; payment display/default order now uses the explicit supported-method order. Full hosted browser review continues after this fix. No live payment/email service was enabled and no local review data was uploaded.
 
 See [Live_Launch_Checklist.md](Live_Launch_Checklist.md) for account/configuration needs and the explicit live-launch gate.

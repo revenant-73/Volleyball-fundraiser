@@ -575,9 +575,7 @@ function PublicPage({ slug, athleteId }) {
         ...f,
         method:
           f.method ||
-          Object.keys(data.campaign.paymentSettings).find(
-            (key) => data.campaign.paymentSettings[key].enabled,
-          ) ||
+          Object.keys(methodNames).find((key) => data.campaign.paymentSettings[key]?.enabled) ||
           '',
       }));
   }, [data]);
@@ -675,7 +673,7 @@ function PublicPage({ slug, athleteId }) {
   const c = data.campaign,
     a = data.athlete,
     p = c.paymentSettings,
-    enabled = Object.keys(p).filter((k) => p[k].enabled),
+    enabled = Object.keys(methodNames).filter((k) => p[k]?.enabled),
     active = c.status === 'active' || c.status === 'paused';
   return (
     <main className="public-page" style={{ '--org-accent': c.color || '#5ce1bc' }}>

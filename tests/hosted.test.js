@@ -245,6 +245,23 @@ test('hosted API transactions, cold starts, capabilities and access control', as
       const rotated = { password: 'a-new-fictional-review-password-for-tests' };
       assert.equal((await request('/api/admin', 'GET', undefined, {}, rotated)).status, 401);
       for (let i = 0; i < 16; i++) {
+        assert.equal(
+          (
+            await request(
+              '/api/login',
+              'POST',
+              {
+                email: 'coach@tvvc.example',
+                password: rotated.password,
+              },
+              {},
+              rotated,
+            )
+          ).status,
+          200,
+        );
+      }
+      for (let i = 0; i < 16; i++) {
         const failed = await request(
           '/api/login',
           'POST',

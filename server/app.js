@@ -155,6 +155,9 @@ export function createApp({
       if (attempt.count > 15)
         throw new AppError('Too many sign-in attempts. Try again in a minute.', 429);
       const session = service.login(req.body.email, req.body.password);
+      // Successful sign-ins are not failed attempts. In particular, repeated
+      // authenticated review sessions must not trip the brute-force hold.
+      attempts.delete(key);
       const raw = token();
       sessions.set(hash(raw), { ...session, expires: Date.now() + 8 * 60 * 60 * 1000 });
       res.cookie('rally_session', raw, {

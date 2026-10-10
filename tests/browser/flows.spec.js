@@ -45,6 +45,33 @@ const noOverflow = async (page) =>
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1),
   ).toBeTruthy();
+
+test('payment order and default are stable after database JSON object key reordering', async ({
+  page,
+}) => {
+  const c = await fixture(page.request);
+  await page.request.post(`/api/admin/campaigns/${c.id}/action`, {
+    headers,
+    data: { action: 'launch' },
+  });
+  await page.route(`**/api/public/${c.slug}`, async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    const p = data.campaign.paymentSettings;
+    data.campaign.paymentSettings = {
+      venmo: p.venmo,
+      check: p.check,
+      school: p.school,
+      stripe: p.stripe,
+    };
+    await route.fulfill({ response, json: data });
+  });
+  await page.goto(`/c/${c.slug}`);
+  await expect(page.getByLabel('Card · simulated Stripe', { exact: true })).toBeChecked();
+  await expect(page.locator('.payment-options label').first()).toHaveText(
+    'Card · simulated Stripe',
+  );
+});
 test('390px athlete setup saves photo/message and two contacts, resumes and completes without sending', async ({
   page,
 }) => {
