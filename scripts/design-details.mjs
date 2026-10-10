@@ -5,10 +5,10 @@ const page = await context.newPage();
 const base = 'http://127.0.0.1:5173';
 await page.goto(base);
 await page.getByRole('button', { name: 'Open administration →' }).click();
-await page.getByRole('heading', { name: 'The rally, at a glance.' }).waitFor();
+await page.getByRole('button', { name: 'Dashboard', exact: true }).waitFor();
 const data = await page.evaluate(async () => await (await fetch('/api/admin')).json());
 const campaign = data.campaigns[0];
-for (const section of ['Athletes', 'Ledger', 'Email & activity']) {
+for (const section of ['Athletes', 'Donations', 'Campaign Settings']) {
   await page.getByRole('button', { name: section, exact: true }).click();
   await page.screenshot({
     path: `artifacts/design-review/${section.toLowerCase().replaceAll(/[^a-z]+/g, '-')}-phone.png`,

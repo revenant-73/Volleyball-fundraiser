@@ -1065,16 +1065,24 @@ function Unsubscribe({ token }) {
   );
 }
 
-const adminTabs = ['Overview', 'Athletes', 'Ledger', 'Email & activity', 'Settings'];
+const adminTabs = ['Dashboard', 'Athletes', 'Donations', 'Campaign Settings'];
 function Admin() {
   const { data, setData, error, refresh } = useResource('/api/admin');
   const [selected, setSelected] = useState(''),
-    [tab, setTab] = useState('Overview'),
+    [tab, setTab] = useState('Dashboard'),
     [feedback, setFeedback] = useState(''),
     [failure, setFailure] = useState(''),
     [busy, setBusy] = useState(false),
-    [create, setCreate] = useState(false);
+    [create, setCreate] = useState(false),
+    [duplicate, setDuplicate] = useState(false),
+    [destination, setDestination] = useState({ filter: 'all', key: 0 });
   const campaign = data?.campaigns.find((c) => c.id === selected) || data?.campaigns[0];
+  const sectionHeading = useRef(null);
+  function navigate(section, filter = 'all') {
+    setTab(section);
+    setDestination((current) => ({ filter, key: current.key + 1 }));
+    requestAnimationFrame(() => sectionHeading.current?.focus());
+  }
   async function mutate(path, method, body, success = 'Saved.') {
     setBusy(true);
     setFailure('');
@@ -1092,12 +1100,13 @@ function Admin() {
     }
   }
   const base = campaign ? `/api/admin/campaigns/${campaign.id}` : '';
+  const action = (action) => mutate(`${base}/action`, 'POST', { action }, `${action} complete.`);
   if (!data)
     return (
       <main className="narrow">
         {error ? (
           <>
-            <Notice>Administrator access requires a demo login.</Notice>
+            <Notice>Administrator access requires a review login.</Notice>
             <Login onLogin={refresh} />
           </>
         ) : (
@@ -1106,22 +1115,17 @@ function Admin() {
       </main>
     );
   return (
-    <main className="admin-shell">
+    <main className="admin-shell simplified-admin">
       <aside className="admin-sidebar">
         <div className="eyebrow">Coach’s workspace</div>
         <h2>{data.organization.name || data.organization.displayName || 'Organization'}</h2>
-        <p className="sidebar-description">
-          Every supporter.
-          <br />
-          One clear view.
-        </p>
         <nav aria-label="Administrator sections">
           {adminTabs.map((item) => (
             <button
               key={item}
               className={tab === item ? 'active' : ''}
               aria-pressed={tab === item}
-              onClick={() => setTab(item)}
+              onClick={() => navigate(item)}
             >
               {item}
               <span aria-hidden="true">{tab === item ? '→' : ''}</span>
@@ -1129,10 +1133,7 @@ function Admin() {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <span className="sim-dot" />
-          Local simulator
-          <br />
-          <small>Real email and payments disabled</small>
+          <small>Review simulation · real email and payments disabled</small>
           <button
             className="text-button"
             onClick={async () => {
@@ -1146,25 +1147,6 @@ function Admin() {
         </div>
       </aside>
       <section className="admin-content">
-        <header className="admin-title">
-          <div>
-            <div className="eyebrow">{tab}</div>
-            <h1>
-              {tab === 'Overview'
-                ? 'The rally, at a glance.'
-                : tab === 'Athletes'
-                  ? 'Your team. Their stories.'
-                  : tab === 'Ledger'
-                    ? 'Follow the funds.'
-                    : tab === 'Email & activity'
-                      ? 'The next touchpoint.'
-                      : 'Make this rally yours.'}
-            </h1>
-          </div>
-          <button className="secondary" onClick={() => setCreate(!create)}>
-            + New campaign
-          </button>
-        </header>
         <div className="campaign-selector">
           <Field label="Campaign">
             <select
@@ -1173,6 +1155,9 @@ function Admin() {
                 setSelected(e.target.value);
                 setFeedback('');
                 setFailure('');
+                setCreate(false);
+                setDuplicate(false);
+                setDestination({ filter: 'all', key: destination.key + 1 });
               }}
             >
               {data.campaigns.map((c) => (
@@ -1182,15 +1167,46 @@ function Admin() {
               ))}
             </select>
           </Field>
-          {campaign && (
-            <>
-              <Status value={campaign.status} />
-              <Link className="button secondary" href={`/c/${campaign.slug}`} target="_blank">
+          <div className="campaign-tools">
+            <button
+              className="secondary compact"
+              aria-expanded={create}
+              onClick={() => {
+                setCreate(!create);
+                setDuplicate(false);
+              }}
+            >
+              + New campaign
+            </button>
+            {campaign && (
+              <button
+                className="secondary compact"
+                aria-expanded={duplicate}
+                onClick={() => {
+                  setDuplicate(!duplicate);
+                  setCreate(false);
+                }}
+              >
+                Duplicate
+              </button>
+            )}
+            {campaign && (
+              <Link
+                className="button secondary compact"
+                href={`/c/${campaign.slug}`}
+                target="_blank"
+              >
                 Preview public page ↗
               </Link>
-            </>
-          )}
+            )}
+          </div>
         </div>
+        <header className="admin-title">
+          <h1 ref={sectionHeading} tabIndex="-1">
+            {tab}
+          </h1>
+          {campaign && <Status value={campaign.status} />}
+        </header>
         <Notice kind="error">{failure}</Notice>
         <Notice>{feedback}</Notice>
         {create && (
@@ -1205,47 +1221,102 @@ function Admin() {
               if (result) {
                 setSelected(result.id);
                 setCreate(false);
-                setTab('Settings');
+                navigate('Campaign Settings');
               }
             }}
             busy={busy}
           />
         )}
+        {duplicate && campaign && (
+          <DuplicateCampaign
+            key={campaign.id}
+            campaign={campaign}
+            busy={busy}
+            onDuplicate={async (name) => {
+              const result = await mutate(
+                `${base}/duplicate`,
+                'POST',
+                { name },
+                'Campaign duplicated as a fresh draft; no contacts or donations copied.',
+              );
+              if (result) {
+                setSelected(result.id);
+                setDuplicate(false);
+                navigate('Campaign Settings');
+              }
+            }}
+          />
+        )}
         {campaign ? (
           <>
-            {tab === 'Overview' && (
-              <Overview
-                campaign={campaign}
-                busy={busy}
-                action={(action) =>
-                  mutate(`${base}/action`, 'POST', { action }, `${action} complete.`)
-                }
-              />
+            {tab === 'Dashboard' && (
+              <Overview campaign={campaign} busy={busy} action={action} navigate={navigate} />
             )}
             {tab === 'Athletes' && (
-              <Athletes campaign={campaign} mutate={mutate} base={base} busy={busy} />
-            )}
-            {tab === 'Ledger' && (
-              <Ledger campaign={campaign} mutate={mutate} base={base} busy={busy} error={failure} />
-            )}
-            {tab === 'Email & activity' && (
-              <EmailActivity campaign={campaign} mutate={mutate} base={base} busy={busy} />
-            )}
-            {tab === 'Settings' && (
-              <Settings
-                key={campaign.id + campaign.now + campaign.status}
+              <Athletes
+                key={campaign.id}
                 campaign={campaign}
                 mutate={mutate}
                 base={base}
                 busy={busy}
+                destination={destination}
               />
             )}
+            {tab === 'Donations' && (
+              <Ledger
+                key={campaign.id}
+                campaign={campaign}
+                mutate={mutate}
+                base={base}
+                busy={busy}
+                error={failure}
+                destination={destination}
+              />
+            )}
+            <div hidden={tab !== 'Campaign Settings'}>
+              <Settings
+                key={campaign.id}
+                campaign={campaign}
+                mutate={mutate}
+                base={base}
+                busy={busy}
+                action={action}
+                destination={destination}
+              />
+            </div>
           </>
         ) : (
           <Empty>Create your first campaign to get started.</Empty>
         )}
       </section>
     </main>
+  );
+}
+function DuplicateCampaign({ campaign, busy, onDuplicate }) {
+  const [name, setName] = useState(`${campaign.name} · next season`);
+  return (
+    <form
+      className="panel"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onDuplicate(name);
+      }}
+    >
+      <h2>Duplicate campaign</h2>
+      <p>
+        Copy settings into a fresh draft. Athletes, contacts, donations and messages stay with this
+        campaign.
+      </p>
+      <Field
+        label="New campaign name"
+        required
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+      <button className="secondary" disabled={busy}>
+        Create duplicate draft
+      </button>
+    </form>
   );
 }
 function NewCampaign({ onCreate, busy }) {
@@ -1303,27 +1374,152 @@ function NewCampaign({ onCreate, busy }) {
     </form>
   );
 }
-function Overview({ campaign: c, busy, action }) {
-  const complete = c.athletes.filter((a) => a.completed).length,
-    approved = c.athletes.filter((a) => a.approved && a.completed).length;
+function emailQueue(c) {
+  const today = new Intl.DateTimeFormat('en-CA', {
+    timeZone: c.timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(c.now));
+  const counts = { ready: 0, scheduled: 0, held: 0, blocked: 0, overdue: 0, failed: 0, thanks: 0 };
+  const eligible = [];
+  for (const job of c.jobs) {
+    if (job.type === 'thank-you') {
+      if (job.status === 'queued') counts.thanks++;
+      continue;
+    }
+    if (job.status === 'failed') {
+      counts.failed++;
+      continue;
+    }
+    if (job.status === 'blocked') {
+      counts.blocked++;
+      continue;
+    }
+    if (job.status !== 'queued') continue;
+    const contact = c.contacts.find((contact) => contact.id === job.contactId);
+    if (c.status === 'closed' || contact?.state === 'suppressed' || contact?.state === 'donated') {
+      counts.blocked++;
+      continue;
+    }
+    if (
+      c.status !== 'active' ||
+      today > c.endDate ||
+      contact?.state === 'pending' ||
+      !contact?.athleteIds.some((id) =>
+        c.athletes.some((a) => a.id === id && a.completed && a.approved),
+      )
+    ) {
+      counts.held++;
+      continue;
+    }
+    if (job.dueDate < today) {
+      counts.overdue++;
+      continue;
+    }
+    if (job.dueDate === today) counts.ready++;
+    else counts.scheduled++;
+    eligible.push(job);
+  }
+  counts.next = eligible.sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0]?.dueDate;
+  return counts;
+}
+function EmailSummary({ campaign: c, onDetails }) {
+  const counts = emailQueue(c);
+  return (
+    <section className="panel email-summary">
+      <div className="section-heading">
+        <h2>Upcoming messages</h2>
+        {onDetails && (
+          <button className="text-button" onClick={onDetails}>
+            View email activity →
+          </button>
+        )}
+      </div>
+      <div className="delivery-counts">
+        <div>
+          <strong>{counts.ready}</strong>
+          <span>Ready today</span>
+        </div>
+        <div>
+          <strong>{counts.scheduled}</strong>
+          <span>Scheduled</span>
+        </div>
+        <div>
+          <strong>{counts.held}</strong>
+          <span>Held</span>
+        </div>
+        <div>
+          <strong>{counts.blocked}</strong>
+          <span>Blocked</span>
+        </div>
+      </div>
+      <p>
+        {c.status === 'draft'
+          ? 'Preparation sends no donor messages. Launch queues approved athletes’ invitations.'
+          : c.status === 'paused'
+            ? 'Solicitations are paused. Resuming skips missed reminders.'
+            : c.status === 'closed'
+              ? 'Fundraising messages have stopped. Donation acknowledgments can still be simulated.'
+              : counts.next
+                ? `Next eligible fundraising date: ${counts.next} · ${c.timezone}.`
+                : 'No eligible fundraising messages are scheduled.'}
+      </p>
+      <small>
+        Held includes pending payments and profiles awaiting approval.{' '}
+        {counts.overdue > 0 && `${counts.overdue} overdue message(s) will be skipped. `}
+        {counts.failed > 0 && `${counts.failed} failed message(s) need review. `}
+        {counts.thanks} queued thank-you acknowledgment(s), shown separately from fundraising. All
+        delivery is simulated.
+      </small>
+    </section>
+  );
+}
+function Overview({ campaign: c, busy, action, navigate }) {
+  const approved = c.athletes.filter((a) => a.approved && a.completed).length;
+  const stories = c.athletes.filter((a) => a.completed && !a.approved).length;
+  const incomplete = c.athletes.filter((a) => !a.completed).length;
+  const pending = c.ledger.filter(
+    (d) => d.status === 'pending' && d.method !== 'stripe' && d.reported === true,
+  ).length;
+  const failed = c.jobs.filter((j) => j.status === 'failed').length;
+  const attention = [
+    [stories, 'Athlete stories need approval', 'Review athlete stories', 'Athletes', 'approval'],
+    [
+      pending,
+      'Reported payments need verification',
+      'Review reported payments',
+      'Donations',
+      'reported',
+    ],
+    [incomplete, 'Athletes have unfinished setup', 'Follow up on setup', 'Athletes', 'incomplete'],
+    [failed, 'Messages failed delivery', 'Review failed emails', 'Campaign Settings', 'failed'],
+  ].filter(([count]) => count > 0);
   return (
     <>
-      <section className="campaign-overview court">
-        <div className="overview-heading">
+      <section className="dashboard-progress">
+        <div className="dashboard-heading">
           <div>
-            <div className="eyebrow">{c.organizationName}</div>
             <h2>{c.name}</h2>
-            <p>{c.purpose}</p>
+            <p>
+              {c.status === 'draft'
+                ? 'Prepare your team, then launch.'
+                : c.status === 'closed'
+                  ? 'Final confirmed totals. Reported payments can still be reconciled.'
+                  : c.status === 'paused'
+                    ? 'Fundraising emails are paused.'
+                    : 'Track the rally and keep your team moving.'}
+            </p>
           </div>
-          <span className="deadline">
-            ENDS
-            <br />
-            <strong>{c.endDate}</strong>
+          <div className="dashboard-deadline">
+            <span>
+              {c.status === 'closed' ? 'Ended' : 'Ends'} {c.endDate}
+            </span>
             <small>{c.timezone}</small>
-          </span>
+          </div>
         </div>
         <Progress total={c.totals.grossCents} goal={c.goalCents} />
-        <div className="button-row">
+        <div className="campaign-actions">
           {c.status === 'draft' && (
             <button disabled={busy} onClick={() => action('launch')}>
               Launch campaign →
@@ -1339,47 +1535,18 @@ function Overview({ campaign: c, busy, action }) {
               Resume campaign
             </button>
           )}
-          {c.status !== 'closed' && (
-            <button
-              className="danger-button"
-              disabled={busy}
-              onClick={() => {
-                if (
-                  confirm(
-                    'Close this campaign permanently? Pending contributions can still be reconciled.',
-                  )
-                )
-                  action('close');
-              }}
-            >
-              Close campaign
-            </button>
+          {c.status === 'draft' && (
+            <small>
+              Launch queues invitations for completed, approved athletes. No real email is sent.
+            </small>
           )}
         </div>
-        <small>
-          Launch queues invitations for approved, completed athletes. All deliveries remain
-          simulated.
-        </small>
       </section>
-      <div className="kpi-row">
+      <div className="kpi-row dashboard-metrics">
         <div>
-          <span>Confirmed gross</span>
+          <span>Confirmed donations</span>
           <strong>{money(c.totals.grossCents)}</strong>
-          <small>{c.totals.donationCount} donations</small>
-        </div>
-        <div>
-          <span>Known fees</span>
-          <strong>{money(c.totals.knownFeeCents)}</strong>
-          <small>{c.totals.unknownFeeCount} donation(s) with unknown fees</small>
-        </div>
-        <div>
-          <span>{c.totals.unknownFeeCount ? 'Known net subtotal' : 'Net proceeds'}</span>
-          <strong>{money(c.totals.knownNetCents)}</strong>
-          <small>
-            {c.totals.unknownFeeCount
-              ? 'Excludes donations with unknown fees'
-              : 'All recorded fees accounted for'}
-          </small>
+          <small>{c.totals.donationCount} confirmed donation(s)</small>
         </div>
         <div>
           <span>Athletes ready</span>
@@ -1387,168 +1554,216 @@ function Overview({ campaign: c, busy, action }) {
             {approved}
             <i> / {c.athletes.length}</i>
           </strong>
-          <small>{complete} completed onboarding</small>
+          <small>Setup complete and story approved</small>
+        </div>
+        <div>
+          <span>Payments awaiting review</span>
+          <strong>{pending}</strong>
+          <small>Reported external payments · excluded from totals</small>
         </div>
       </div>
-      <div className="overview-columns">
-        <section className="panel">
-          <div className="section-heading">
-            <h2>Team totals</h2>
-            <span className="muted">Confirmed only</span>
-          </div>
-          {c.teamTotals.length ? (
-            c.teamTotals.map((t) => (
-              <div className="summary-row" key={t.team}>
-                <span>{t.team || 'Unassigned team'}</span>
-                <strong>{money(t.totalCents)}</strong>
+      <section className="panel attention-panel">
+        <h2>Needs attention</h2>
+        {attention.length ? (
+          <div className="attention-list">
+            {attention.map(([count, description, label, section, filter]) => (
+              <div className="attention-row" key={label}>
+                <span className="attention-count">{count}</span>
+                <span>{description}</span>
+                <button className="secondary compact" onClick={() => navigate(section, filter)}>
+                  {label} →
+                </button>
               </div>
-            ))
-          ) : (
-            <Empty>Team totals appear after athletes are added.</Empty>
-          )}
+            ))}
+          </div>
+        ) : (
+          <Empty>
+            {c.status === 'closed'
+              ? 'All reported payments are resolved. Your campaign is wrapped up.'
+              : 'You’re caught up. No outstanding setup, payment or delivery tasks.'}
+          </Empty>
+        )}
+      </section>
+      {c.status === 'draft' && (
+        <section className="panel preparation-checklist">
+          <h2>Before you launch</h2>
+          <ol>
+            <li>
+              <span>Add athletes and share private setup links</span>
+              <strong>{c.athletes.length} added</strong>
+            </li>
+            <li>
+              <span>Review completed stories and authorization</span>
+              <strong>{approved} ready</strong>
+            </li>
+            <li>
+              <span>Preview campaign settings and email timing</span>
+              <button className="text-button" onClick={() => navigate('Campaign Settings')}>
+                Review settings →
+              </button>
+            </li>
+          </ol>
+          <small>
+            {c.contacts.length} unique donor contacts saved. Contacts stay private; no invitations
+            are sent in preparation.
+          </small>
         </section>
-        <section className="panel">
-          <h2>Campaign readiness</h2>
-          <ul className="readiness-list">
-            <li>
-              <span>{approved} athletes ready to invite</span>
-              <Status value={approved ? 'ready' : 'pending'} />
-            </li>
-            <li>
-              <span>{c.contacts.length} unique donor contacts</span>
-            </li>
-            <li>
-              <span>
-                {c.ledger.filter((d) => d.status === 'pending' && d.reported !== false).length}{' '}
-                payments awaiting reconciliation
-              </span>
-            </li>
-            <li>
-              <span>Live services</span>
-              <Status value="disabled" />
-            </li>
-          </ul>
-          <Notice>
-            External payment details are configurable placeholders. Uploading a contact does not
-            establish recipient consent.
-          </Notice>
-        </section>
-      </div>
+      )}
+      <EmailSummary campaign={c} onDetails={() => navigate('Campaign Settings', 'email')} />
+      <details className="panel compact-disclosure">
+        <summary>
+          <strong>Team totals</strong> <span>Confirmed only</span>
+        </summary>
+        {c.teamTotals.length ? (
+          c.teamTotals.map((t) => (
+            <div className="summary-row" key={t.team}>
+              <span>{t.team || 'Unassigned team'}</span>
+              <strong>{money(t.totalCents)}</strong>
+            </div>
+          ))
+        ) : (
+          <Empty>Team totals appear after athletes are added.</Empty>
+        )}
+      </details>
     </>
   );
 }
-function Athletes({ campaign: c, mutate, base, busy }) {
+function Athletes({ campaign: c, mutate, base, busy, destination }) {
+  const [filter, setFilter] = useState(destination.filter);
+  useEffect(() => setFilter(destination.filter), [destination.key]);
+  const athletes = c.athletes.filter((a) =>
+    filter === 'approval'
+      ? a.completed && !a.approved
+      : filter === 'incomplete'
+        ? !a.completed
+        : filter === 'ready'
+          ? a.completed && a.approved
+          : true,
+  );
   const [form, setForm] = useState({ name: '', displayName: '', team: '' }),
     [csv, setCsv] = useState('name,displayName,team\n'),
     [result, setResult] = useState(null),
     [notes, setNotes] = useState({});
   return (
     <>
-      <div className="overview-columns">
-        <form
-          className="panel"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            const r = await mutate(
-              `${base}/athletes`,
-              'POST',
-              form,
-              'Athlete added. Save their private invitation link.',
-            );
-            if (r) {
-              setResult(r);
-              setForm({ name: '', displayName: '', team: '' });
-            }
-          }}
-        >
-          <h2>Add an athlete</h2>
-          <Field
-            label="Private full name"
-            required
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-          />
-          <div className="form-grid">
+      <details className="panel add-athletes compact-disclosure">
+        <summary>
+          <strong>Add athletes</strong> <span>Single entry or CSV import</span>
+        </summary>
+        <div className="overview-columns">
+          <form
+            className="panel"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const r = await mutate(
+                `${base}/athletes`,
+                'POST',
+                form,
+                'Athlete added. Save their private invitation link.',
+              );
+              if (r) {
+                setResult(r);
+                setForm({ name: '', displayName: '', team: '' });
+              }
+            }}
+          >
+            <h2>Add an athlete</h2>
             <Field
-              label="Public display name"
+              label="Private full name"
               required
-              value={form.displayName}
-              onChange={(e) => setForm({ ...form, displayName: e.target.value })}
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
             />
-            <Field
-              label="Team"
-              value={form.team}
-              onChange={(e) => setForm({ ...form, team: e.target.value })}
-            />
-          </div>
-          <button disabled={busy}>Add & create secure invitation</button>
-          {result?.privatePath && (
-            <div className="private-link">
-              <strong>Private invitation · only share with this athlete</strong>
-              <Link href={result.privatePath} target="_blank">
-                Open athlete setup ↗
-              </Link>
-              <input
-                aria-label="New private invitation URL"
-                readOnly
-                value={pathUrl(result.privatePath)}
+            <div className="form-grid">
+              <Field
+                label="Public display name"
+                required
+                value={form.displayName}
+                onChange={(e) => setForm({ ...form, displayName: e.target.value })}
+              />
+              <Field
+                label="Team"
+                value={form.team}
+                onChange={(e) => setForm({ ...form, team: e.target.value })}
               />
             </div>
-          )}
-        </form>
-        <form
-          className="panel"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            const r = await mutate(
-              `${base}/import`,
-              'POST',
-              { csv },
-              'CSV checked. Review import results.',
-            );
-            if (r) setResult(r);
-          }}
-        >
-          <h2>Import your roster</h2>
-          <Field
-            label="CSV roster"
-            hint="Required headers: name,displayName,team. The whole file is validated before anyone is added."
-          >
-            <textarea
-              rows="6"
-              spellCheck="false"
-              value={csv}
-              onChange={(e) => setCsv(e.target.value)}
-            />
-          </Field>
-          <input
-            aria-label="Upload roster CSV"
-            type="file"
-            accept=".csv,text/csv"
-            onChange={async (e) => {
-              if (e.target.files[0]) setCsv(await e.target.files[0].text());
+            <button disabled={busy}>Add & create secure invitation</button>
+            {result?.privatePath && (
+              <div className="private-link">
+                <strong>Private invitation · only share with this athlete</strong>
+                <Link href={result.privatePath} target="_blank">
+                  Open athlete setup ↗
+                </Link>
+                <input
+                  aria-label="New private invitation URL"
+                  readOnly
+                  value={pathUrl(result.privatePath)}
+                />
+              </div>
+            )}
+          </form>
+          <form
+            className="panel"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              const r = await mutate(
+                `${base}/import`,
+                'POST',
+                { csv },
+                'CSV checked. Review import results.',
+              );
+              if (r) setResult(r);
             }}
-          />
-          <button disabled={busy}>Validate & import</button>
-          {result?.errors?.map((item, i) => (
-            <Notice key={i} kind="error">
-              Row {item.row}: {item.error}
-            </Notice>
-          ))}
-          {result?.imported && (
-            <Notice>
-              {result.imported.length} athlete(s) imported. Private links are listed with each
-              athlete below.
-            </Notice>
-          )}
-        </form>
-      </div>
+          >
+            <h2>Import your roster</h2>
+            <Field
+              label="CSV roster"
+              hint="Required headers: name,displayName,team. The whole file is validated before anyone is added."
+            >
+              <textarea
+                rows="6"
+                spellCheck="false"
+                value={csv}
+                onChange={(e) => setCsv(e.target.value)}
+              />
+            </Field>
+            <input
+              aria-label="Upload roster CSV"
+              type="file"
+              accept=".csv,text/csv"
+              onChange={async (e) => {
+                if (e.target.files[0]) setCsv(await e.target.files[0].text());
+              }}
+            />
+            <button disabled={busy}>Validate & import</button>
+            {result?.errors?.map((item, i) => (
+              <Notice key={i} kind="error">
+                Row {item.row}: {item.error}
+              </Notice>
+            ))}
+            {result?.imported && (
+              <Notice>
+                {result.imported.length} athlete(s) imported. Private links are listed with each
+                athlete below.
+              </Notice>
+            )}
+          </form>
+        </div>
+      </details>
       <section className="panel">
         <div className="section-heading">
           <h2>Athlete roster</h2>
           <span className="muted">{c.athletes.length} athletes</span>
         </div>
-        {c.athletes.map((a) => (
+        <Field label="Athlete view">
+          <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+            <option value="all">All athletes</option>
+            <option value="approval">Needs approval</option>
+            <option value="incomplete">Setup incomplete</option>
+            <option value="ready">Ready to fundraise</option>
+          </select>
+        </Field>
+        {athletes.map((a) => (
           <details className="athlete-detail" key={a.id}>
             <summary>
               <div className="avatar">
@@ -1557,12 +1772,15 @@ function Athletes({ campaign: c, mutate, base, busy }) {
               <span>
                 <strong>{a.name}</strong>
                 <small>
-                  Public: {a.displayName} · {a.team || 'No team'}
+                  {a.team || 'No team'} · Public: {a.displayName}
                 </small>
               </span>
               <div className="roster-status">
-                <Status value={a.completed ? 'completed' : 'incomplete'} />
-                <Status value={a.approved ? 'approved' : 'approval_pending'} />
+                <span
+                  className={`status status-${!a.completed ? 'incomplete' : a.approved ? 'approved' : 'approval_pending'}`}
+                >
+                  {!a.completed ? 'Setup incomplete' : a.approved ? 'Ready' : 'Needs approval'}
+                </span>
                 <strong>{money(a.totalCents)}</strong>
               </div>
               <span className="expand-cue" aria-hidden="true">
@@ -1651,6 +1869,21 @@ function Athletes({ campaign: c, mutate, base, busy }) {
                   Public page ↗
                 </Link>
               </div>
+              <details className="athlete-contacts">
+                <summary>
+                  Donor contacts (
+                  {c.contacts.filter((contact) => contact.athleteIds.includes(a.id)).length})
+                </summary>
+                <ul className="contact-list">
+                  {c.contacts
+                    .filter((contact) => contact.athleteIds.includes(a.id))
+                    .map((contact) => (
+                      <li key={contact.id}>
+                        {contact.email} · {contact.state}
+                      </li>
+                    ))}
+                </ul>
+              </details>
               {a.privatePath && (
                 <div className="private-link">
                   <strong>Private editing link — athlete only</strong>
@@ -1667,79 +1900,169 @@ function Athletes({ campaign: c, mutate, base, busy }) {
             </div>
           </details>
         ))}
-        {!c.athletes.length && <Empty>No athletes yet. Add one or import your roster.</Empty>}
+        {!athletes.length && (
+          <Empty>
+            {c.athletes.length
+              ? 'No athletes match this view.'
+              : 'No athletes yet. Open Add athletes to enter one or import your roster.'}
+          </Empty>
+        )}
       </section>
     </>
   );
 }
-function Ledger({ campaign: c, mutate, base, busy, error }) {
+function AuditEntries({ entries }) {
+  return entries.length ? (
+    entries.map((entry, i) => (
+      <details className="audit-item" key={i}>
+        <summary>
+          <strong>{entry.action}</strong>
+          <span>
+            {date(entry.at)} · {entry.actor}
+          </span>
+        </summary>
+        <p>{entry.note}</p>
+        <pre>{JSON.stringify({ before: entry.before, after: entry.after }, null, 2)}</pre>
+      </details>
+    ))
+  ) : (
+    <Empty>Confirmations, corrections, refunds and credit changes appear here.</Empty>
+  );
+}
+function Ledger({ campaign: c, mutate, base, busy, error, destination }) {
   const [editing, setEditing] = useState(null),
-    [filter, setFilter] = useState('all');
-  const rows = c.ledger.filter((d) => filter === 'all' || d.status === filter);
+    [filter, setFilter] = useState(destination.filter);
+  useEffect(() => setFilter(destination.filter), [destination.key]);
+  const isReported = (d) => d.status === 'pending' && d.method !== 'stripe' && d.reported === true;
+  const pending = c.ledger.filter(isReported);
+  const rows = c.ledger.filter(
+    (d) =>
+      !isReported(d) &&
+      (filter === 'all' ||
+        d.status === filter ||
+        (filter === 'reserved' && d.status === 'pending' && d.reported === false)),
+  );
+  function donationTable(donations) {
+    return (
+      <div className="table-scroll donation-table">
+        <table>
+          <thead>
+            <tr>
+              <th>Donation / donor</th>
+              <th>Amount / fees</th>
+              <th>Method</th>
+              <th>Status</th>
+              <th>Credit</th>
+              <th>Review</th>
+            </tr>
+          </thead>
+          <tbody>
+            {donations.map((d) => (
+              <tr key={d.id}>
+                <td data-label="Donation">
+                  <strong>{d.reference}</strong>
+                  <small>
+                    {d.donorName || 'Supporter'} · {d.email}
+                  </small>
+                </td>
+                <td data-label="Amount">
+                  <strong>{money(d.amountCents)}</strong>
+                  <small>Fee: {d.feeCents === null ? 'Unknown' : money(d.feeCents)}</small>
+                </td>
+                <td data-label="Method">{methodNames[d.method]}</td>
+                <td data-label="Status">
+                  <Status value={d.status} />
+                  {d.status === 'pending' && d.reported === false && (
+                    <small>
+                      {d.method === 'stripe'
+                        ? 'Checkout awaiting verified event'
+                        : 'Reference only · no payment reported'}
+                    </small>
+                  )}
+                </td>
+                <td data-label="Credit">
+                  {c.athletes.find((a) => a.id === d.athleteId)?.displayName || 'Campaign'}
+                </td>
+                <td data-label="Review">
+                  <button className="secondary compact" onClick={() => setEditing(d)}>
+                    Review
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
   return (
     <>
-      <section className="panel">
-        <div className="section-heading">
-          <div>
-            <h2>Donation ledger</h2>
-            <p>Only confirmed, non-refunded contributions count toward the rally.</p>
-          </div>
-          <a className="button secondary" href={`${base}/export`}>
-            Export CSV ↓
-          </a>
+      <div className="kpi-row finance-metrics">
+        <div>
+          <span>Confirmed gross</span>
+          <strong>{money(c.totals.grossCents)}</strong>
+          <small>{c.totals.donationCount} donations</small>
         </div>
-        <Field label="Filter status">
+        <div>
+          <span>Known fees</span>
+          <strong>{money(c.totals.knownFeeCents)}</strong>
+          <small>{c.totals.unknownFeeCount} donation(s) with unknown fees</small>
+        </div>
+        <div>
+          <span>{c.totals.unknownFeeCount ? 'Known net subtotal' : 'Net proceeds'}</span>
+          <strong>{money(c.totals.knownNetCents)}</strong>
+          <small>
+            {c.totals.unknownFeeCount
+              ? 'Excludes donations with unknown fees'
+              : 'All recorded fees accounted for'}
+          </small>
+        </div>
+      </div>
+      <div className="donation-toolbar">
+        <Field label="Donation view">
           <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-            {['all', 'pending', 'confirmed', 'rejected', 'refunded'].map((status) => (
-              <option key={status}>{status}</option>
-            ))}
+            <option value="all">All donations</option>
+            <option value="reported">Reported payments</option>
+            <option value="pending">All pending</option>
+            <option value="reserved">Unreported references</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="rejected">Rejected</option>
+            <option value="refunded">Refunded</option>
           </select>
         </Field>
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Donation / donor</th>
-                <th>Amount / fees</th>
-                <th>Method</th>
-                <th>Status</th>
-                <th>Credit</th>
-                <th>Review</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((d) => (
-                <tr key={d.id}>
-                  <td>
-                    <strong>{d.reference}</strong>
-                    <small>
-                      {d.donorName || 'Supporter'} · {d.email}
-                    </small>
-                  </td>
-                  <td>
-                    <strong>{money(d.amountCents)}</strong>
-                    <small>Fee: {d.feeCents === null ? 'Unknown' : money(d.feeCents)}</small>
-                  </td>
-                  <td>{methodNames[d.method]}</td>
-                  <td>
-                    <Status value={d.status} />
-                    {d.status === 'pending' && d.reported === false && (
-                      <small>Reference only · no payment reported</small>
-                    )}
-                  </td>
-                  <td>{c.athletes.find((a) => a.id === d.athleteId)?.displayName || 'Campaign'}</td>
-                  <td>
-                    <button className="secondary compact" onClick={() => setEditing(d)}>
-                      Review
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {!rows.length && <Empty>No {filter === 'all' ? '' : filter} contributions yet.</Empty>}
-      </section>
+        <a className="button secondary" href={`${base}/export`}>
+          Export CSV ↓
+        </a>
+      </div>
+      {['all', 'pending', 'reported'].includes(filter) && (
+        <section className="panel reported-payments">
+          <div className="section-heading">
+            <div>
+              <h2>Reported payments awaiting review</h2>
+              <p>
+                Verify funds received before these amounts count. Fundraising reminders stay paused
+                until resolved.
+              </p>
+            </div>
+            <span className="attention-count">{pending.length}</span>
+          </div>
+          {pending.length ? (
+            donationTable(pending)
+          ) : (
+            <Empty>No reported external payments need review.</Empty>
+          )}
+        </section>
+      )}
+      {filter !== 'reported' && (
+        <section className="panel">
+          <h2>Donation history</h2>
+          <p>
+            Only confirmed, non-refunded contributions count. Unreported references are separate
+            from payment reports.
+          </p>
+          {rows.length ? donationTable(rows) : <Empty>No donations match this view.</Empty>}
+        </section>
+      )}
       {editing && (
         <LedgerEditor
           key={editing.id}
@@ -1760,25 +2083,12 @@ function Ledger({ campaign: c, mutate, base, busy, error }) {
           }}
         />
       )}
-      <section className="panel">
-        <h2>Audit trail</h2>
-        {c.audit.length ? (
-          c.audit.map((entry, i) => (
-            <details className="audit-item" key={i}>
-              <summary>
-                <strong>{entry.action}</strong>
-                <span>
-                  {date(entry.at)} · {entry.actor}
-                </span>
-              </summary>
-              <p>{entry.note}</p>
-              <pre>{JSON.stringify({ before: entry.before, after: entry.after }, null, 2)}</pre>
-            </details>
-          ))
-        ) : (
-          <Empty>Confirmations, corrections, refunds, and credit changes appear here.</Empty>
-        )}
-      </section>
+      <details className="panel compact-disclosure">
+        <summary>
+          <strong>Campaign audit trail</strong> <span>{c.audit.length} entries</span>
+        </summary>
+        <AuditEntries entries={c.audit} />
+      </details>
     </>
   );
 }
@@ -1963,73 +2273,111 @@ function LedgerEditor({ donation: d, campaign, athletes, busy, close, save, erro
           <Notice kind="error">{error}</Notice>
           <button disabled={busy}>Save ledger action</button>
         </form>
+        <details className="donation-audit">
+          <summary>Donation audit history</summary>
+          <AuditEntries
+            entries={campaign.audit.filter(
+              (entry) =>
+                entry.before?.id === d.id || entry.after?.id === d.id || entry.donationId === d.id,
+            )}
+          />
+        </details>
       </section>
     </div>
   );
 }
-function EmailActivity({ campaign: c, mutate, base, busy }) {
+function EmailActivity({ campaign: c, mutate, base, busy, destination }) {
+  const [filter, setFilter] = useState('all');
+  useEffect(() => {
+    if (destination.filter === 'failed') setFilter('failed');
+    else if (destination.filter === 'email') setFilter('all');
+  }, [destination.key]);
+  const jobs = c.jobs.filter(
+    (job) =>
+      filter === 'all' ||
+      job.status === filter ||
+      (filter === 'solicitation' && job.type === 'solicitation') ||
+      (filter === 'thank-you' && job.type === 'thank-you'),
+  );
   const [days, setDays] = useState('1'),
     [email, setEmail] = useState(''),
     [reason, setReason] = useState('unsubscribe');
   return (
     <>
-      <section className="simulator-panel">
-        <div>
-          <div className="eyebrow">Local test controls</div>
-          <h2>Fast-forward the season.</h2>
-          <p>
-            Campaign clock: <strong>{date(c.now)}</strong>
-          </p>
-          <small>
-            Simulated sends only. Paused and closed campaigns do not send solicitations. Resume
-            skips overdue messages.
-          </small>
-        </div>
-        <div className="simulator-actions">
-          <button
-            disabled={busy}
-            onClick={() =>
-              mutate(
-                `${base}/action`,
-                'POST',
-                { action: 'run' },
-                'Worker ran. Review the simulated delivery log.',
-              )
-            }
-          >
-            Run email worker
-          </button>
-          <Field
-            label="Advance clock (days)"
-            type="number"
-            min="1"
-            max="365"
-            value={days}
-            onChange={(e) => setDays(e.target.value)}
-          />
-          <button
-            className="secondary"
-            disabled={busy}
-            onClick={() =>
-              mutate(
-                `${base}/action`,
-                'POST',
-                { action: 'advance', days: Number(days) },
-                'Clock advanced and worker ran.',
-              )
-            }
-          >
-            Advance & run →
-          </button>
-        </div>
-      </section>
+      <details className="prototype-testing compact-disclosure">
+        <summary>
+          <strong>Prototype testing</strong> <span>Simulated sends and campaign clock</span>
+        </summary>
+        <section className="simulator-panel">
+          <div>
+            <div className="eyebrow">Local test controls</div>
+            <h2>Simulate email delivery</h2>
+            <p>
+              Campaign clock: <strong>{date(c.now)}</strong>
+            </p>
+            <small>
+              Simulated sends only. Paused and closed campaigns do not send solicitations. Resume
+              skips overdue messages.
+            </small>
+          </div>
+          <div className="simulator-actions">
+            <button
+              disabled={busy}
+              onClick={() =>
+                mutate(
+                  `${base}/action`,
+                  'POST',
+                  { action: 'run' },
+                  'Worker ran. Review the simulated delivery log.',
+                )
+              }
+            >
+              Run email worker
+            </button>
+            <Field
+              label="Advance clock (days)"
+              type="number"
+              min="1"
+              max="365"
+              value={days}
+              onChange={(e) => setDays(e.target.value)}
+            />
+            <button
+              className="secondary"
+              disabled={busy}
+              onClick={() =>
+                mutate(
+                  `${base}/action`,
+                  'POST',
+                  { action: 'advance', days: Number(days) },
+                  'Clock advanced and worker ran.',
+                )
+              }
+            >
+              Advance & run →
+            </button>
+          </div>
+        </section>
+      </details>
       <section className="panel">
         <div className="section-heading">
           <h2>Messages & delivery</h2>
           <Status value="simulation" />
         </div>
-        {c.jobs.length ? (
-          c.jobs.map((job) => (
+        <Field label="Message view">
+          <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+            <option value="all">All messages</option>
+            <option value="failed">Failed</option>
+            <option value="queued">Queued</option>
+            <option value="sent">Sent</option>
+            <option value="blocked">Blocked</option>
+            <option value="skipped">Skipped</option>
+            <option value="solicitation">Fundraising messages</option>
+            <option value="thank-you">Thank-you acknowledgments</option>
+          </select>
+        </Field>
+        {jobs.length ? (
+          jobs.map((job) => (
             <details className="job-item" key={job.id}>
               <summary>
                 <span>
@@ -2090,7 +2438,9 @@ function EmailActivity({ campaign: c, mutate, base, busy }) {
           ))
         ) : (
           <Empty>
-            No messages queued during preparation. Launch after athlete content approval.
+            {c.jobs.length
+              ? 'No messages match this view.'
+              : 'No messages queued during preparation. Launch after athlete content approval.'}
           </Empty>
         )}
       </section>
@@ -2161,7 +2511,14 @@ function EmailActivity({ campaign: c, mutate, base, busy }) {
     </>
   );
 }
-function Settings({ campaign: c, mutate, base, busy }) {
+function Settings({ campaign: c, mutate, base, busy, action, destination }) {
+  const activityPanel = useRef(null);
+  useEffect(() => {
+    if (['email', 'failed'].includes(destination.filter) && activityPanel.current) {
+      activityPanel.current.open = true;
+      requestAnimationFrame(() => activityPanel.current.querySelector('summary')?.focus());
+    }
+  }, [destination.key]);
   const [form, setForm] = useState({
     name: c.name,
     purpose: c.purpose,
@@ -2175,7 +2532,8 @@ function Settings({ campaign: c, mutate, base, busy }) {
     paymentSettings: structuredClone(c.paymentSettings),
     schedule: structuredClone(c.schedule),
   });
-  const [logoError, setLogoError] = useState('');
+  const [logoError, setLogoError] = useState(''),
+    [validationError, setValidationError] = useState('');
   function uploadLogo(file) {
     if (!file) return;
     setLogoError('');
@@ -2190,7 +2548,6 @@ function Settings({ campaign: c, mutate, base, busy }) {
     reader.onload = () => setForm((current) => ({ ...current, logo: reader.result }));
     reader.readAsDataURL(file);
   }
-  const [duplicateName, setDuplicateName] = useState(`${c.name} · next season`);
   const changePayment = (method, key, value) =>
     setForm({
       ...form,
@@ -2202,8 +2559,36 @@ function Settings({ campaign: c, mutate, base, busy }) {
   return (
     <>
       <form
+        onInvalidCapture={(e) => {
+          // Native validation visits every invalid field. Reveal and focus only
+          // the first, while cancelling hidden-control browser focus attempts.
+          e.preventDefault();
+          const formElement = e.currentTarget;
+          const first = formElement.querySelector(
+            'input:invalid, select:invalid, textarea:invalid',
+          );
+          if (e.target !== first) return;
+          for (
+            let ancestor = first.parentElement;
+            ancestor && ancestor !== formElement;
+            ancestor = ancestor.parentElement
+          ) {
+            if (ancestor.tagName === 'DETAILS') ancestor.open = true;
+          }
+          const label =
+            first.closest('label')?.querySelector('span')?.textContent || 'the highlighted setting';
+          setValidationError(`Please check ${label}. ${first.validationMessage}`);
+          requestAnimationFrame(() => {
+            if (first.isConnected) {
+              first.focus();
+              first.scrollIntoView({ block: 'center', behavior: 'instant' });
+            }
+          });
+        }}
+        onChange={() => setValidationError('')}
         onSubmit={(e) => {
           e.preventDefault();
+          setValidationError('');
           mutate(
             base,
             'PATCH',
@@ -2218,8 +2603,10 @@ function Settings({ campaign: c, mutate, base, busy }) {
           );
         }}
       >
-        <section className="panel">
-          <h2>The campaign</h2>
+        <details className="panel settings-group compact-disclosure" open>
+          <summary>
+            <strong>Basics & branding</strong> <span>Purpose, goal, dates and organization</span>
+          </summary>
           <div className="form-grid">
             {[
               ['name', 'Campaign name', 'text'],
@@ -2284,9 +2671,11 @@ function Settings({ campaign: c, mutate, base, busy }) {
               onChange={(e) => setForm({ ...form, purpose: e.target.value })}
             />
           </Field>
-        </section>
-        <section className="panel">
-          <h2>Payment methods</h2>
+        </details>
+        <details className="panel settings-group compact-disclosure">
+          <summary>
+            <strong>Payment methods</strong> <span>Enabled methods and instructions</span>
+          </summary>
           <p>
             Details below are organization configuration. No live checkout or payments are
             connected.
@@ -2346,9 +2735,12 @@ function Settings({ campaign: c, mutate, base, busy }) {
               )}
             </details>
           ))}
-        </section>
-        <section className="panel">
-          <h2>Email schedule & templates</h2>
+        </details>
+        <details className="panel settings-group compact-disclosure">
+          <summary>
+            <strong>Email schedule & templates</strong>{' '}
+            <span>Timing and organization-sent messages</span>
+          </summary>
           {c.status !== 'draft' && (
             <Notice>
               Campaign dates and timezone are locked after launch. You can still edit email timing,
@@ -2473,36 +2865,59 @@ function Settings({ campaign: c, mutate, base, busy }) {
               + Add optional message
             </button>
           </fieldset>
-        </section>
-        <button disabled={busy}>Save campaign settings</button>
+        </details>
+        <Notice kind="error">{validationError}</Notice>
+        <div className="settings-save">
+          <button disabled={busy}>Save campaign settings</button>
+          <small>Save changes to basics, payment methods and email templates together.</small>
+        </div>
       </form>
-      <form
-        className="panel duplicate-form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          mutate(
-            `${base}/duplicate`,
-            'POST',
-            { name: duplicateName },
-            'Campaign duplicated as a fresh draft; no contacts or donations copied.',
-          );
-        }}
-      >
-        <h2>Next season, ready sooner.</h2>
-        <p>
-          Duplicate these settings into a new draft. Athletes, contacts, donations, and email jobs
-          stay with this campaign.
-        </p>
-        <Field
-          label="New campaign name"
-          required
-          value={duplicateName}
-          onChange={(e) => setDuplicateName(e.target.value)}
+      <details className="panel compact-disclosure email-activity-group" ref={activityPanel}>
+        <summary>
+          <strong>Email & activity</strong>{' '}
+          <span>Delivery previews, recipient controls and logs</span>
+        </summary>
+        <EmailSummary campaign={c} />
+        <EmailActivity
+          campaign={c}
+          mutate={mutate}
+          base={base}
+          busy={busy}
+          destination={destination}
         />
-        <button className="secondary" disabled={busy}>
-          Duplicate campaign
-        </button>
-      </form>
+      </details>
+      <details className="panel compact-disclosure campaign-management">
+        <summary>
+          <strong>Campaign management</strong> <span>Status and closing</span>
+        </summary>
+        <p>
+          Current status: <Status value={c.status} />
+        </p>
+        {c.status === 'closed' ? (
+          <Empty>This campaign is closed. Pending contributions can still be reconciled.</Empty>
+        ) : (
+          <>
+            <p>
+              Closing permanently stops fundraising messages. Pending contributions can still be
+              reconciled.
+            </p>
+            <button
+              className="danger-button"
+              disabled={busy}
+              onClick={() => {
+                if (
+                  confirm(
+                    'Close this campaign permanently? Pending contributions can still be reconciled.',
+                  )
+                )
+                  action('close');
+              }}
+            >
+              Close campaign
+            </button>
+          </>
+        )}
+      </details>
     </>
   );
 }

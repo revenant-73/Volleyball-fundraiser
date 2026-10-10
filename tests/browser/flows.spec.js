@@ -189,7 +189,7 @@ test('external reference before report; report pending; admin confirms and CSV e
   expect(d.contacts[0].state).toBe('pending');
   await page.goto('/admin');
   await page.getByRole('combobox', { name: 'Campaign', exact: true }).selectOption(c.id);
-  await page.getByRole('button', { name: 'Ledger', exact: true }).click();
+  await page.getByRole('button', { name: 'Donations', exact: true }).click();
   await page.getByRole('button', { name: 'Review', exact: true }).click();
   await page.getByLabel('Reason / audit note').fill('Matched sample Venmo statement.');
   await page.getByRole('button', { name: 'Save ledger action', exact: true }).click();
@@ -226,7 +226,8 @@ test('post-launch template editing and configured school redirect remain local s
   });
   await page.goto('/admin');
   await page.getByRole('combobox', { name: 'Campaign', exact: true }).selectOption(c.id);
-  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Campaign Settings', exact: true }).click();
+  await page.getByText('Email schedule & templates', { exact: true }).click();
   await page.locator('.template-item').first().locator('summary').click();
   await page.getByLabel('Subject', { exact: true }).first().fill('Updated organization invitation');
   await page.getByRole('button', { name: 'Save campaign settings', exact: true }).click();
@@ -276,7 +277,9 @@ test('desktop admin launches, deduplicates shared contacts, simulates and unsubs
   await noOverflow(page);
   mkdirSync('docs/screenshots', { recursive: true });
   await page.screenshot({ path: 'docs/screenshots/admin-desktop.png', fullPage: true });
-  await page.getByRole('button', { name: 'Email & activity', exact: true }).click();
+  await page.getByRole('button', { name: 'Campaign Settings', exact: true }).click();
+  await page.getByText('Email & activity', { exact: true }).click();
+  await page.getByText('Prototype testing', { exact: true }).click();
   await page.getByRole('button', { name: 'Run email worker', exact: true }).click();
   d = await detail(page.request, c.id);
   expect(d.jobs.filter((j) => j.status === 'sent')).toHaveLength(1);
@@ -336,4 +339,276 @@ test('retry after a lost donation response reuses request ID and creates one led
     .click();
   await expect(page.getByText('Simulated checkout ready.')).toBeVisible();
   expect((await detail(page.request, c.id)).ledger).toHaveLength(1);
+});
+
+async function preparedAthlete(request, c, name, approved = false) {
+  const a = await addAthlete(request, c, name);
+  const saved = await request.patch(`/api/athlete/${a.privatePath.split('/').at(-1)}`, {
+    headers,
+    data: {
+      emails: `${name.toLowerCase()}-${c.id}@example.test`,
+      message: 'Fictional athlete story for interface review.',
+      authorization: true,
+      done: true,
+    },
+  });
+  expect(saved.ok()).toBeTruthy();
+  if (approved) {
+    const approval = await request.post(
+      `/api/admin/campaigns/${c.id}/athletes/${a.athlete.id}/approve`,
+      {
+        headers,
+        data: { approved: true, authorizationNote: 'Synthetic authorization for test.' },
+      },
+    );
+    expect(approval.ok()).toBeTruthy();
+  }
+  return a;
+}
+async function externalReference(request, c, email, report = false) {
+  const reserved = await request.post(`/api/public/${c.slug}/donations`, {
+    headers,
+    data: { requestId: randomUUID(), amount: 40, email, method: 'venmo', intent: true },
+  });
+  expect(reserved.ok()).toBeTruthy();
+  const receipt = await reserved.json();
+  if (report) {
+    const reported = await request.post(`/api/receipt/${receipt.receiptToken}/report`, {
+      headers,
+      data: { requestId: randomUUID(), amount: 40, transaction: `review-${randomUUID()}` },
+    });
+    expect(reported.ok()).toBeTruthy();
+  }
+  return receipt;
+}
+async function openAdminCampaign(page, c) {
+  await page.goto('/admin');
+  await page.getByRole('combobox', { name: 'Campaign', exact: true }).selectOption(c.id);
+}
+
+test('390px dashboard shortcuts filter athlete tasks; approval and collapsed CSV import work', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const c = await fixture(page.request);
+  await preparedAthlete(page.request, c, 'Story');
+  await addAthlete(page.request, c, 'Incomplete');
+  await openAdminCampaign(page, c);
+  const nav = page.getByRole('navigation', { name: 'Administrator sections' });
+  await expect(nav.getByRole('button')).toHaveCount(4);
+  for (const name of ['Dashboard', 'Athletes', 'Donations', 'Campaign Settings'])
+    await expect(nav.getByRole('button', { name, exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /^Review athlete stories/ }).click();
+  await expect(page.locator('.athlete-detail')).toHaveCount(1);
+  await page.locator('.athlete-detail > summary').click();
+  await page.getByLabel('Coach’s authorization record').fill('Synthetic guardian review recorded.');
+  await page.getByRole('button', { name: 'Approve public content', exact: true }).click();
+  await expect(page.getByText('Public profile approved.', { exact: true })).toBeVisible();
+  expect((await detail(page.request, c.id)).athletes.find((a) => a.name === 'Story').approved).toBe(
+    true,
+  );
+  await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
+  await page.getByRole('button', { name: /^Follow up on setup/ }).click();
+  await expect(page.locator('.athlete-detail')).toHaveCount(1);
+  await expect(page.locator('.athlete-detail > summary')).toContainText('Incomplete');
+  await expect(page.getByLabel('CSV roster')).toBeHidden();
+  await page.getByText('Add athletes', { exact: true }).click();
+  await page.getByLabel('CSV roster').fill('name,displayName,team\nImported,Imported,Varsity');
+  await page.getByRole('button', { name: 'Validate & import', exact: true }).click();
+  await expect(page.getByText(/1 athlete\(s\) imported/)).toBeVisible();
+  expect((await detail(page.request, c.id)).athletes).toHaveLength(3);
+  expect((await detail(page.request, c.id)).jobs).toHaveLength(0);
+  await noOverflow(page);
+});
+
+test('reported payment shortcut excludes reserved references; confirmation retains fee uncertainty and audit', async ({
+  page,
+}) => {
+  const c = await fixture(page.request);
+  await page.request.post(`/api/admin/campaigns/${c.id}/action`, {
+    headers,
+    data: { action: 'launch' },
+  });
+  const reserved = await externalReference(page.request, c, 'reference-only@example.test');
+  const reported = await externalReference(page.request, c, 'reported@example.test', true);
+  await openAdminCampaign(page, c);
+  await page.getByRole('button', { name: /^Review reported payments/ }).click();
+  await expect(page.getByText(reported.donation.reference, { exact: true })).toBeVisible();
+  await expect(page.getByText(reserved.donation.reference, { exact: true })).toBeHidden();
+  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await page
+    .getByLabel('Reason / audit note')
+    .fill('Fictional statement matched through shortcut.');
+  await page.getByRole('button', { name: 'Save ledger action', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const d = await detail(page.request, c.id);
+  expect(d.totals.grossCents).toBe(4000);
+  expect(d.totals.unknownFeeCount).toBe(1);
+  expect(d.totals.knownNetCents).toBe(0);
+  expect(d.audit).toHaveLength(1);
+  await expect(page.getByText('Known net subtotal', { exact: true })).toBeVisible();
+  await noOverflow(page);
+});
+
+test('settings edits survive email inspection; failed email shortcut and hidden simulator remain usable', async ({
+  page,
+}) => {
+  const c = await fixture(page.request);
+  await preparedAthlete(page.request, c, 'Ready', true);
+  await page.request.post(`/api/admin/campaigns/${c.id}/action`, {
+    headers,
+    data: { action: 'launch' },
+  });
+  const d = await detail(page.request, c.id);
+  await page.request.post(`/api/admin/campaigns/${c.id}/jobs/${d.jobs[0].id}/fail`, {
+    headers,
+    data: {},
+  });
+  await openAdminCampaign(page, c);
+  await page.getByRole('button', { name: 'Campaign Settings', exact: true }).click();
+  const purpose = 'Unsaved purpose retained while reviewing deliveries.';
+  await page.getByRole('textbox', { name: 'Campaign purpose', exact: true }).fill(purpose);
+  await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
+  await page.getByRole('button', { name: /^Review failed emails/ }).click();
+  await expect(page.locator('.job-item')).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Run email worker', exact: true })).toBeHidden();
+  await page.locator('.job-item summary').click();
+  await page.getByRole('button', { name: 'Retry simulated failure', exact: true }).click();
+  await expect(page.getByText('Failed job safely retried.', { exact: true })).toBeVisible();
+  expect((await detail(page.request, c.id)).jobs[0].status).toBe('sent');
+  await expect(page.getByRole('textbox', { name: 'Campaign purpose', exact: true })).toHaveValue(
+    purpose,
+  );
+  await page.getByRole('button', { name: 'Save campaign settings', exact: true }).click();
+  await expect(page.getByText('Campaign settings saved.', { exact: true })).toBeVisible();
+  expect((await detail(page.request, c.id)).purpose).toBe(purpose);
+  await page.getByText('Prototype testing', { exact: true }).click();
+  await page.getByRole('button', { name: 'Run email worker', exact: true }).click();
+  await expect(
+    page.getByText('Worker ran. Review the simulated delivery log.', { exact: true }),
+  ).toBeVisible();
+  expect((await detail(page.request, c.id)).jobs.filter((j) => j.status === 'sent')).toHaveLength(
+    1,
+  );
+});
+
+test('dashboard adapts to preparation, pause, resume and close; closing keeps reconciliation accessible', async ({
+  page,
+}) => {
+  const c = await fixture(page.request);
+  await preparedAthlete(page.request, c, 'Lifecycle', true);
+  await openAdminCampaign(page, c);
+  await expect(page.getByRole('button', { name: 'Close campaign', exact: true })).toBeHidden();
+  await page.getByRole('button', { name: 'Launch campaign →', exact: true }).click();
+  await expect(page.getByText('launch complete.', { exact: true })).toBeVisible();
+  const reported = await externalReference(page.request, c, 'close-pending@example.test', true);
+  await page.getByRole('button', { name: 'Pause campaign', exact: true }).click();
+  await expect(page.getByText('pause complete.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Resume campaign', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Resume campaign', exact: true }).click();
+  await expect(page.getByText('resume complete.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Campaign Settings', exact: true }).click();
+  await page.getByText('Campaign management', { exact: true }).click();
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: 'Close campaign', exact: true }).click();
+  expect((await detail(page.request, c.id)).status).toBe('active');
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: 'Close campaign', exact: true }).click();
+  await expect(page.getByText('close complete.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Launch campaign →', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Resume campaign', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: /^Review reported payments/ }).click();
+  await expect(page.getByText(reported.donation.reference, { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Review', exact: true }).click();
+  await page.getByLabel('Reason / audit note').fill('Matched fictional post-close statement.');
+  await page.getByRole('button', { name: 'Save ledger action', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  const d = await detail(page.request, c.id);
+  expect(d.status).toBe('closed');
+  expect(d.totals.grossCents).toBe(4000);
+  expect(d.audit).toHaveLength(1);
+  expect(
+    d.jobs.filter((job) => job.type === 'solicitation' && job.status === 'queued'),
+  ).toHaveLength(0);
+});
+
+test('dashboard email counts distinguish a pending-payment hold from sendable messages and suppression', async ({
+  page,
+}) => {
+  const c = await fixture(page.request);
+  await preparedAthlete(page.request, c, 'Held', true);
+  await page.request.post(`/api/admin/campaigns/${c.id}/action`, {
+    headers,
+    data: { action: 'launch' },
+  });
+  const email = `held-${c.id}@example.test`;
+  await externalReference(page.request, c, email, true);
+  await openAdminCampaign(page, c);
+  const summary = page.locator('.email-summary:visible');
+  await expect(
+    summary.getByText('Held', { exact: true }).locator('..').locator('strong'),
+  ).toHaveText('3');
+  await expect(
+    summary.getByText('Ready today', { exact: true }).locator('..').locator('strong'),
+  ).toHaveText('0');
+  await expect(
+    summary.getByText('Scheduled', { exact: true }).locator('..').locator('strong'),
+  ).toHaveText('0');
+  await page.getByRole('button', { name: /^View email activity/ }).click();
+  await page.getByLabel('Email address', { exact: true }).fill(email);
+  await page.getByRole('button', { name: 'Suppress organization-wide', exact: true }).click();
+  await expect(
+    page.getByText('Recipient suppressed. Queued and future fundraising messages blocked.', {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: 'Dashboard', exact: true }).click();
+  await expect(
+    summary.getByText('Held', { exact: true }).locator('..').locator('strong'),
+  ).toHaveText('0');
+  await expect(
+    summary.getByText('Blocked', { exact: true }).locator('..').locator('strong'),
+  ).toHaveText('3');
+  const d = await detail(page.request, c.id);
+  expect(d.totals.grossCents).toBe(0);
+  expect(d.contacts[0].state).toBe('suppressed');
+});
+
+test('collapsed settings reveal and focus invalid fields; template expanders have mobile tap targets', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const browserErrors = [];
+  page.on('console', (message) => {
+    if (message.type() === 'error') browserErrors.push(message.text());
+  });
+  const c = await fixture(page.request);
+  await openAdminCampaign(page, c);
+  await page.getByRole('button', { name: 'Campaign Settings', exact: true }).click();
+  const campaignName = page.getByRole('textbox', { name: 'Campaign name', exact: true });
+  await campaignName.fill('');
+  await page.getByText('Basics & branding', { exact: true }).click();
+  await expect(campaignName).toBeHidden();
+  await page.getByRole('button', { name: 'Save campaign settings', exact: true }).click();
+  await expect(campaignName).toBeVisible();
+  await expect(campaignName).toBeFocused();
+  expect((await detail(page.request, c.id)).name).toBe(c.name);
+  await campaignName.fill(c.name);
+  await page.getByText('Email schedule & templates', { exact: true }).click();
+  const template = page.locator('.template-item').first();
+  const summary = template.locator('summary');
+  expect((await summary.boundingBox()).height).toBeGreaterThanOrEqual(44);
+  await summary.click();
+  const subject = page.getByRole('textbox', { name: 'Subject', exact: true }).first();
+  await subject.fill('');
+  await summary.click();
+  await page.getByText('Email schedule & templates', { exact: true }).click();
+  await expect(subject).toBeHidden();
+  await page.getByRole('button', { name: 'Save campaign settings', exact: true }).click();
+  await expect(subject).toBeVisible();
+  await expect(subject).toBeFocused();
+  expect((await detail(page.request, c.id)).jobs).toHaveLength(0);
+  expect(browserErrors.filter((message) => message.includes('not focusable'))).toEqual([]);
+  await noOverflow(page);
 });

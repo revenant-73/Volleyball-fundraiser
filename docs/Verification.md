@@ -7,7 +7,7 @@ Verified locally on 2026-10-09 (Pacific time), Node 22.14.0 / Windows. All data 
 | Check | Result |
 | --- | --- |
 | `npm test` | **39 passed**, zero failures: domain transitions, API authorization, local snapshot/idempotency restart checks, simulated Windows failures, and hosted Postgres transaction/cold-request tests |
-| `npm run test:e2e` | **8 passed**, zero failures: Chromium desktop and 390×844 browser flows, including reordered hosted JSON payment settings |
+| `npm run test:e2e` | **14 passed**, zero failures: original athlete/donor flows plus dashboard shortcuts, approval/import, reported-payment filtering, settings preservation, lifecycle controls, held-message counts and collapsed-field validation |
 | `npm run build` | Passed; Vite production assets generated |
 | `npm run format:check` | Passed; JavaScript, JSX, CSS, scripts and configuration use consistent Prettier formatting |
 | `node --check` on server/domain, server/app and dev launcher | Passed |
@@ -77,3 +77,18 @@ Results and screenshots are in ignored `artifacts/hosted-review/`. Verification 
 Browser review found JSONB key reordering changed the default payment method; payment display/default order now uses the explicit supported-method order, covered by a browser regression test. Successful logins clear failed-attempt counters, while repeated failed logins remain throttled across function instances. No live payment/email service was enabled and no local review data was uploaded.
 
 See [Live_Launch_Checklist.md](Live_Launch_Checklist.md) for account/configuration needs and the explicit live-launch gate.
+
+## Admin simplification
+
+The approved admin layout now has Dashboard, Athletes, Donations and Campaign Settings. The dashboard prioritizes confirmed progress and actionable outstanding tasks. Donation fees/net stay in Donations; reported external payments appear before history. Settings, delivery details and prototype controls remain available through disclosures. New/duplicate campaign controls sit beside the selector, and closing is under Campaign Settings → Campaign management.
+
+On 2026-10-09, the complete local browser suite passed **14/14**, with the **39/39** state/API/storage checks, production build and formatting checks also passing. Six added browser cases verify:
+
+- At 390px, athlete-story and unfinished-setup shortcuts filter actual roster rows; approval and collapsed CSV import remain usable; preparation still creates no email jobs.
+- Reported-payment shortcuts exclude unused references; manual confirmation preserves unknown fees, known-net subtotal and an audit record.
+- Unsaved settings survive navigation to failed deliveries and a retry; simulated worker retries do not duplicate sends.
+- Launch, pause, resume, cancelled close, confirmed close, and post-close reconciliation work through the revised controls.
+- Upcoming-message counts distinguish pending-payment holds from sendable messages and organization suppression; pending reports do not increase totals.
+- Saving invalid values inside collapsed settings opens all containing disclosures, focuses the invalid field and preserves the corrected input. Mobile template expanders meet the 44px target.
+
+The initial design review identified hidden invalid fields and undersized email-template expanders. These were repaired; the resulting first-edit regression was reproduced and fixed before the final suite passed. The independent [second design review](Admin_Design_Evaluation_2.md) returned **PASS**, verifying all four sections at 1440, 768, 390 and 375px, keyboard navigation, tap targets and validation/correction/save. Only the available same-provider reviewer could be used. Current screenshots cover desktop and 390px administration. This remains Chromium viewport testing rather than a physical phone/Safari test. No backend or stored-data migration was needed, and live payment/email services remain disabled.

@@ -25,7 +25,7 @@ await capture('landing-desktop');
 await page.getByLabel('Demo organization').selectOption('coach@tvvc.example');
 await page.getByLabel('Demo password').fill('prototype-only');
 await page.getByRole('button', { name: 'Open administration →' }).click();
-await page.getByRole('heading', { name: 'The rally, at a glance.' }).waitFor();
+await page.getByRole('button', { name: 'Dashboard', exact: true }).waitFor();
 const data = await page.evaluate(async () => await (await fetch('/api/admin')).json());
 const campaign = data.campaigns.find((c) => c.slug === 'tvvc-fall-rally') || data.campaigns[0];
 await capture('admin-desktop');
@@ -33,7 +33,7 @@ for (const w of [768, 390, 375]) {
   await page.setViewportSize({ width: w, height: 844 });
   await capture(`admin-${w}`);
 }
-await page.getByRole('button', { name: 'Settings', exact: true }).click();
+await page.getByRole('button', { name: 'Campaign Settings', exact: true }).click();
 await capture('settings-phone');
 const athlete = campaign.athletes.find((a) => !a.completed && a.privatePath);
 if (athlete) {

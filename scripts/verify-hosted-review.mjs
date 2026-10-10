@@ -269,11 +269,24 @@ try {
   await page.getByLabel('Review password').fill(credentials.password);
   await page.getByRole('button', { name: 'Open administration →', exact: true }).click();
   await page.getByRole('combobox', { name: 'Campaign', exact: true }).selectOption(campaign.id);
+  const adminNav = page.getByRole('navigation', { name: 'Administrator sections' });
+  await expect(adminNav.getByRole('button')).toHaveCount(4);
+  for (const name of ['Dashboard', 'Athletes', 'Donations', 'Campaign Settings'])
+    await expect(adminNav.getByRole('button', { name, exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Close campaign', exact: true })).toBeHidden();
+  await page.screenshot({ path: 'artifacts/hosted-review/dashboard-mobile.png', fullPage: true });
   stage = 'administrator ledger';
-  await page.getByRole('button', { name: 'Ledger', exact: true }).click();
+  await page.getByRole('button', { name: /^Review reported payments/ }).click();
   await expect(page.getByText(external.donation.reference, { exact: true })).toBeVisible();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
   await page.screenshot({ path: 'artifacts/hosted-review/admin-mobile.png', fullPage: true });
+  await page.getByRole('button', { name: 'Athletes', exact: true }).click();
+  await expect(page.getByLabel('CSV roster')).toBeHidden();
+  await page.getByRole('button', { name: 'Campaign Settings', exact: true }).click();
+  await page.getByText('Email & activity', { exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Run email worker', exact: true })).toBeHidden();
+  await page.getByText('Prototype testing', { exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Run email worker', exact: true })).toBeVisible();
   const century = (await api('/api/examples')).campaigns.find((c) =>
     c.organizationName.includes('Century'),
   );
@@ -290,7 +303,7 @@ try {
   const publicData = JSON.stringify(await api(`/api/public/${campaign.slug}`));
   assert.ok(!publicData.includes(sharedEmail) && !publicData.includes(first.privatePath));
   record(
-    '390px administrator login/ledger work; server rejects foreign organization and public-ID edits.',
+    '390px four-section admin, reported-payment shortcut, collapsed roster import and prototype tools work; org/public-ID isolation holds.',
   );
 
   await action('close');
