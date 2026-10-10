@@ -1,0 +1,36 @@
+# Before connecting live services
+
+Milestone one is a local prototype. This list is a launch gate, not a claim that legal, school, provider, payment, or authorization requirements have been verified.
+
+## Organization configuration
+
+- Confirm Century’s approved school payment URL, check payee, mailing address, reference instructions, administrative authority, and school-approved receipt wording. Current values are empty placeholders.
+- Confirm TVVC’s Stripe account and Venmo **Business Profile**, settlement/reconciliation access, and payment instructions. TVVC is for-profit: no charitable tax receipts or charitable tax-deductibility claims.
+- Supply authorized branding/logo, sender identity/contact details, campaign goals/purpose/calendar/timezone, and accountable organization administrators. Logo upload is configurable in the prototype; no official logo has been invented.
+- Review sample public display-name defaults. Publish only the approved minimum athlete information. Confirm who may approve campaigns and athlete content.
+
+## Email/provider/permission gate
+
+- Obtain written confirmation from the chosen email provider that the specific **athlete-uploaded contact fundraising** workflow is permitted. No provider has been selected or approved here.
+- Establish the applicable recipient permission requirements, collection evidence, sender identification, unsubscribe handling, complaints, bounce handling, retention, deletion, and applicable school/organization obligations. Athlete entry of an email address must not be treated as proof of recipient consent.
+- Approve organization-sent templates and a separate transactional thank-you policy. Configure verified sending domains, sender identity, authenticated provider events, delivery monitoring, and opt-out suppression persistence. Unsubscribe should not require an account.
+- Implement test-recipient allowlisting and a separate production send gate. Verify no real recipients can be contacted during rehearsals. Confirm whether transactional acknowledgements remain permitted for unsubscribed contacts; hard bounce/complaint suppression must prevent further delivery.
+
+## Athlete/guardian authorization process
+
+1. Before collection/publication, give athlete and guardian the exact proposed public display name, photo/message usage, fundraising purpose, publication period, and withdrawal contact.
+2. Record affirmative athlete/guardian authorization by the school/club’s approved process. Store a dated record/evidence reference, who reviewed it, scope of permitted use, and any expiry/withdrawal. Do not assume the prototype checkbox alone meets this process.
+3. Administrator reviews the actual submitted content and records the authorization reference before approval. Editing the public content requires another review; the prototype invalidates approval automatically.
+4. Document withdrawal, unpublishing, deletion/retention and access rules, including how archived emails/exports/backups are handled. Avoid collecting unnecessary birth dates, full legal names, addresses or other public minor information.
+
+This proposed workflow must be approved by the relevant organization; it is not a verified authorization/legal policy.
+
+## Payments and operations
+
+- Build live Stripe checkout server-side, verify signed webhook events and amount/currency/account/campaign matching, handle asynchronous settlement/failure/refund/dispute events, and persist provider event IDs transactionally. Prototype HMAC events are mock events only.
+- Configure approved portal and Venmo instructions/reference handling. Establish actual received-date/transaction evidence requirements and a no-reference duplicate-review process. Match reported amounts to real funds before confirmation. Rehearse simultaneous/duplicate reports and admin confirmations.
+- Define processing/hosting/email costs, unknown fees, refunds (including partial refunds/non-returned processing fees), chargebacks, settlement timing, and organization-specific acknowledgements. The prototype handles full ledger refunds and illustrative mock Stripe fees only.
+- Replace single-process JSON files and known demo passwords with a production database, durable transactional outbox/idempotency constraints, jobs/locks, real admin provisioning and recovery, HTTPS, secrets management, secure sessions, least-privilege org access, private media storage, and audit retention.
+- Implement approved contact/data deletion and retention controls, backup/recovery verification, abuse/rate controls, monitoring and operational shutdown. Do not publish private capabilities in request/access/error logs or analytics.
+- Deploy an HTTPS public domain so shared/QR URLs work on recipients’ devices. Review on physical phones/tablets and Safari; test real device-native sharing/clipboard and QR scanning on another device.
+- Review the complete prototype, run provider/account test mode with only approved testers, and obtain explicit live-launch authorization before enabling any real payment or outbound fundraising email adapter.
