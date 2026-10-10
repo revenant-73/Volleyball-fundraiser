@@ -57,6 +57,23 @@ Local hosted tests use Netlify's in-memory Postgres-compatible emulator with the
 
 The initial CLI preview deployed successfully and applied its database migration, with working direct page routes. Its API failed closed with `MissingDatabaseConnectionError` because runtime connection configuration was absent. The Git-connected production review deployment provisioned the correct runtime connection and now serves the API. Use Git deployment for this site; standalone CLI draft database connectivity remains unverified.
 
-Hosted API verification passed authentication, HTTPS cookie/session continuity, organization scoping, launch deduplication, pending reports and suppression/pause/resume. Six simultaneous identical donation requests and six repeated payment events yielded one ledger entry, one audit confirmation and one thank-you against real hosted Postgres. Browser review found JSONB key reordering changed the default payment method; payment display/default order now uses the explicit supported-method order. Full hosted browser review continues after this fix. No live payment/email service was enabled and no local review data was uploaded.
+Hosted API/browser verification **passed** against `https://volleyball-fundraiser.netlify.app` on 2026-10-09 Pacific, application commit `b8489d9`, Netlify deploy `6ac9b8d46a59be0008f2e3da`. The Git-connected deployment uses the production review database; this is fictional review data, not live fundraising.
+
+`node scripts/verify-hosted-review.mjs` verified:
+
+- Authenticated owner login, rejected local demo password, trusted-Origin enforcement, Secure/HttpOnly cookie, persisted sessions, JSON 401/404 and direct page routing.
+- 390px athlete uploads a synthetic PNG, saves/reloads message, completes with two unique contacts plus a duplicate, and gets the correct public link. Preparation creates no jobs.
+- Shared-contact launch yields three contacts and nine Day 1/10/20 jobs, with both athlete associations preserved.
+- Six simultaneous identical donation requests and six repeated payment events against real hosted Postgres produce one ledger entry, one audit confirmation and one thank-you. Confirmed payment stops solicitation.
+- External reference alone leaves reminders active; reported Venmo pauses them with no revenue increase. Eleven simulated days do not clear the pending hold.
+- Unsubscribe, pause/resume, and late-contact timing persist across requests, without overdue reminder bursts.
+- Hosted donor browser completes simulated Stripe; progress updates. Facebook/public links and the decoded downloadable QR target the exact HTTPS athlete page.
+- 390px administrator browser signs in and opens the ledger. Foreign-organization mutation and public-athlete-ID editing return 404; public JSON excludes contacts and private setup links.
+- Closing stops solicitations. The pending Venmo entry can still be confirmed; retry adds no audit or revenue duplicate. Unknown fee stays unknown. CSV export succeeds.
+- No observed browser script errors or document overflow in the hosted athlete, donor and administrator phone layouts. This remains browser viewport testing, not a physical phone/Safari/native-share test.
+
+Results and screenshots are in ignored `artifacts/hosted-review/`. Verification campaigns remain as closed, auditable fictional records; seeded Century/TVVC campaigns remain draft. The initial incomplete browser fixture is also closed, with its fictional pending report retained for review. No data was deleted. The deployed state remains intact across Git deployments.
+
+Browser review found JSONB key reordering changed the default payment method; payment display/default order now uses the explicit supported-method order, covered by a browser regression test. Successful logins clear failed-attempt counters, while repeated failed logins remain throttled across function instances. No live payment/email service was enabled and no local review data was uploaded.
 
 See [Live_Launch_Checklist.md](Live_Launch_Checklist.md) for account/configuration needs and the explicit live-launch gate.
