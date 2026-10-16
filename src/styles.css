@@ -2975,6 +2975,12 @@ select:disabled {
     font-size: 10px;
   }
 }
+.account-settings form + h2 {
+  margin-top: 32px;
+}
+.account-settings .contact-list {
+  overflow-wrap: anywhere;
+}
 
 .simplified-admin .template-item > summary,
 .simplified-admin .settings-method > summary {

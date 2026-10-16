@@ -4,6 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "pilot:control": "node --env-file=.env.pilot scripts/pilot-control.mjs",
+    "test:e2e:pilot": "playwright test --config=playwright.pilot.config.js",
     "dev": "node scripts/dev.js",
     "start": "node server/index.js",
     "build": "vite build",
@@ -15,6 +17,7 @@
     "configure:review": "node scripts/configure-hosted-review.mjs"
   },
   "dependencies": {
+    "@libsql/client": "^0.15.15",
     "@netlify/database": "^2.0.1",
     "express": "^5.1.0",
     "qrcode": "^1.5.4",

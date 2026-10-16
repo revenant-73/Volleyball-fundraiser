@@ -113,6 +113,7 @@ function useResource(path) {
   const [data, setData] = useState(null),
     [error, setError] = useState('');
   const refresh = async () => {
+    if (!path) return;
     try {
       setError('');
       setData(await api(path));
@@ -243,8 +244,11 @@ function Login({ onLogin }) {
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (runtime && !runtime.hosted) setPassword('prototype-only');
-  }, [runtime?.hosted]);
+    if (runtime?.mode === 'pilot') {
+      setEmail('');
+      setPassword('');
+    } else if (runtime && !runtime.hosted) setPassword('prototype-only');
+  }, [runtime?.hosted, runtime?.mode]);
   return (
     <form
       className="login-form"
@@ -262,31 +266,55 @@ function Login({ onLogin }) {
       }}
     >
       <h2>Coach’s corner</h2>
-      <p>Sign in to review the complete administrator flow.</p>
-      <Field label="Demo organization">
-        <select value={email} onChange={(e) => setEmail(e.target.value)}>
-          <option value="coach@tvvc.example">TVVC · coach@tvvc.example</option>
-          <option value="coach@century.example">Century · coach@century.example</option>
-        </select>
-      </Field>
+      <p>
+        {runtime?.mode === 'pilot'
+          ? 'Sign in with your individual administrator account.'
+          : 'Sign in to review the complete administrator flow.'}
+      </p>
+      {runtime?.mode === 'pilot' ? (
+        <Field
+          label="Administrator email"
+          type="email"
+          autoComplete="username"
+          required
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+      ) : (
+        <Field label="Demo organization">
+          <select value={email} onChange={(e) => setEmail(e.target.value)}>
+            <option value="coach@tvvc.example">TVVC · coach@tvvc.example</option>
+            <option value="coach@century.example">Century · coach@century.example</option>
+          </select>
+        </Field>
+      )}
       <Field
-        label={runtime?.hosted ? 'Review password' : 'Demo password'}
+        label={
+          runtime?.mode === 'pilot'
+            ? 'Password'
+            : runtime?.hosted
+              ? 'Review password'
+              : 'Demo password'
+        }
         type="password"
         autoComplete="current-password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
       />
       <small>
-        {runtime?.hosted
-          ? 'Use the private review password supplied by the project owner.'
-          : 'Local demo password: prototype-only'}
+        {runtime?.mode === 'pilot'
+          ? 'Need account recovery? Contact the organization owner. Email recovery is not enabled.'
+          : runtime?.hosted
+            ? 'Use the private review password supplied by the project owner.'
+            : 'Local demo password: prototype-only'}
       </small>
       <Notice kind="error">{error}</Notice>
-      <button disabled={busy}>{busy ? 'Signing in…' : 'Open administration →'}</button>
+      <button disabled={busy || !runtime}>{busy ? 'Signing in…' : 'Open administration →'}</button>
     </form>
   );
 }
 function Home() {
+  const { data: runtime } = useResource('/api/runtime');
   const { data, error } = useResource('/api/examples');
   return (
     <main className="home">
@@ -310,17 +338,20 @@ function Home() {
           </p>
         </div>
         <div className="hero-footer">
-          <span>Century High School</span>
+          {runtime?.mode !== 'pilot' && <span>Century High School</span>}
           <span>Tualatin Valley Volleyball Club</span>
         </div>
       </section>
       <section className="home-bottom">
         <div>
-          <div className="eyebrow">Explore the prototype</div>
+          <div className="eyebrow">
+            {runtime?.mode === 'pilot' ? 'TVVC pilot preparation' : 'Explore the prototype'}
+          </div>
           <h2>Find your rally.</h2>
           <p>
-            Sample campaigns start in preparation. Coaches launch them in the simulator. Use
-            fictional contacts and athlete information only.
+            {runtime?.mode === 'pilot'
+              ? 'Public fundraising is not open. Payments and email are disabled while administrators prepare the platform. Use fictional campaign and athlete data for rehearsals.'
+              : 'Sample campaigns start in preparation. Coaches launch them in the simulator. Use fictional contacts and athlete information only.'}
           </p>
           <Notice kind="error">{error}</Notice>
           {data?.campaigns.map((c) => (
@@ -1066,6 +1097,153 @@ function Unsubscribe({ token }) {
 }
 
 const adminTabs = ['Dashboard', 'Athletes', 'Donations', 'Campaign Settings'];
+function AdminAccount({ administrator, onSignedOut }) {
+  const { data, error, refresh } = useResource(
+    administrator.role === 'owner' ? '/api/admin/accounts' : null,
+  );
+  const [email, setEmail] = useState(''),
+    [password, setPassword] = useState(''),
+    [adminPassword, setAdminPassword] = useState(''),
+    [currentPassword, setCurrentPassword] = useState(''),
+    [role, setRole] = useState('admin'),
+    [feedback, setFeedback] = useState(''),
+    [failure, setFailure] = useState(''),
+    [busy, setBusy] = useState(false);
+  async function perform(fn) {
+    setBusy(true);
+    setFailure('');
+    setFeedback('');
+    try {
+      await fn();
+      setCurrentPassword('');
+      setPassword('');
+      setAdminPassword('');
+    } catch (e) {
+      setFailure(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className="panel account-settings">
+      <h2>Your account</h2>
+      <p>
+        Signed in as {administrator.email} · {administrator.role}
+      </p>
+      <Notice kind="error">{failure}</Notice>
+      <Notice>{feedback}</Notice>
+      <Field
+        label="Your current password"
+        type="password"
+        autoComplete="current-password"
+        value={currentPassword}
+        onChange={(e) => setCurrentPassword(e.target.value)}
+      />
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          perform(async () => {
+            await api('/api/admin/password', 'POST', { currentPassword, password });
+            await onSignedOut();
+          });
+        }}
+      >
+        <Field
+          label="New password"
+          type="password"
+          autoComplete="new-password"
+          minLength={16}
+          maxLength={200}
+          required
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+        <p>
+          Use a unique password of at least 16 characters. Changing it signs out all your sessions.
+        </p>
+        <button disabled={busy || !currentPassword}>Change password and sign out</button>
+      </form>
+      {administrator.role === 'owner' && (
+        <>
+          <h2>Administrator access</h2>
+          <Notice kind="error">{error}</Notice>
+          {!data && !error && <p>Loading administrators…</p>}
+          <p>
+            Each administrator has a separate account. Give new credentials directly to the intended
+            person; no invitation email is sent.
+          </p>
+          <ul className="contact-list">
+            {data?.accounts.map((account) => (
+              <li key={account.id}>
+                {account.email} · {account.role} · {account.active ? 'Active' : 'Disabled'}{' '}
+                {account.id !== administrator.id && (
+                  <button
+                    className="secondary compact"
+                    disabled={busy || !currentPassword}
+                    onClick={() =>
+                      perform(async () => {
+                        await api(`/api/admin/accounts/${account.id}`, 'PATCH', {
+                          active: !account.active,
+                          currentPassword,
+                        });
+                        await refresh();
+                        setFeedback('Account access updated. Disabled accounts are signed out.');
+                      })
+                    }
+                  >
+                    {account.active ? 'Disable access' : 'Enable access'}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              perform(async () => {
+                await api('/api/admin/accounts', 'POST', {
+                  email,
+                  password: adminPassword,
+                  role,
+                  currentPassword,
+                });
+                setEmail('');
+                await refresh();
+                setFeedback('Administrator created. No email was sent.');
+              });
+            }}
+          >
+            <Field
+              label="New administrator email"
+              type="email"
+              autoComplete="off"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <Field
+              label="New administrator password"
+              type="password"
+              autoComplete="new-password"
+              minLength={16}
+              maxLength={200}
+              required
+              value={adminPassword}
+              onChange={(e) => setAdminPassword(e.target.value)}
+            />
+            <Field label="Access level">
+              <select value={role} onChange={(e) => setRole(e.target.value)}>
+                <option value="admin">Administrator</option>
+                <option value="owner">Organization owner</option>
+              </select>
+            </Field>
+            <button disabled={busy || !currentPassword}>Create administrator</button>
+          </form>
+        </>
+      )}
+    </section>
+  );
+}
 function Admin() {
   const { data, setData, error, refresh } = useResource('/api/admin');
   const [selected, setSelected] = useState(''),
@@ -1076,7 +1254,11 @@ function Admin() {
     [create, setCreate] = useState(false),
     [duplicate, setDuplicate] = useState(false),
     [destination, setDestination] = useState({ filter: 'all', key: 0 });
-  const campaign = data?.campaigns.find((c) => c.id === selected) || data?.campaigns[0];
+  const selectedCampaign = data?.campaigns.find((c) => c.id === selected) || data?.campaigns[0];
+  const campaign =
+    data?.mode === 'pilot' && selectedCampaign
+      ? { ...selectedCampaign, preparationOnly: true }
+      : selectedCampaign;
   const sectionHeading = useRef(null);
   function navigate(section, filter = 'all') {
     setTab(section);
@@ -1120,20 +1302,26 @@ function Admin() {
         <div className="eyebrow">Coach’s workspace</div>
         <h2>{data.organization.name || data.organization.displayName || 'Organization'}</h2>
         <nav aria-label="Administrator sections">
-          {adminTabs.map((item) => (
-            <button
-              key={item}
-              className={tab === item ? 'active' : ''}
-              aria-pressed={tab === item}
-              onClick={() => navigate(item)}
-            >
-              {item}
-              <span aria-hidden="true">{tab === item ? '→' : ''}</span>
-            </button>
-          ))}
+          {(data.mode === 'pilot' ? ['Dashboard', 'Campaign Settings', 'Account'] : adminTabs).map(
+            (item) => (
+              <button
+                key={item}
+                className={tab === item ? 'active' : ''}
+                aria-pressed={tab === item}
+                onClick={() => navigate(item)}
+              >
+                {item}
+                <span aria-hidden="true">{tab === item ? '→' : ''}</span>
+              </button>
+            ),
+          )}
         </nav>
         <div className="sidebar-bottom">
-          <small>Review simulation · real email and payments disabled</small>
+          <small>
+            {data.mode === 'pilot'
+              ? 'TVVC pilot preparation · payments and email disabled'
+              : 'Review simulation · real email and payments disabled'}
+          </small>
           <button
             className="text-button"
             onClick={async () => {
@@ -1142,7 +1330,7 @@ function Admin() {
               refresh();
             }}
           >
-            Switch organization / sign out
+            {data.mode === 'pilot' ? 'Sign out' : 'Switch organization / sign out'}
           </button>
         </div>
       </aside>
@@ -1190,7 +1378,7 @@ function Admin() {
                 Duplicate
               </button>
             )}
-            {campaign && (
+            {campaign && !campaign.preparationOnly && (
               <Link
                 className="button secondary compact"
                 href={`/c/${campaign.slug}`}
@@ -1209,6 +1397,22 @@ function Admin() {
         </header>
         <Notice kind="error">{failure}</Notice>
         <Notice>{feedback}</Notice>
+        {data.mode === 'pilot' && (
+          <Notice>
+            Preparation only. Campaign launch, public access, payments and email are disabled. Use
+            fictional campaign and athlete data until the remaining launch requirements are
+            complete.
+          </Notice>
+        )}
+        {tab === 'Account' && (
+          <AdminAccount
+            administrator={data.administrator}
+            onSignedOut={async () => {
+              setData(null);
+              await refresh();
+            }}
+          />
+        )}
         {create && (
           <NewCampaign
             onCreate={async (form) => {
@@ -1247,7 +1451,7 @@ function Admin() {
             }}
           />
         )}
-        {campaign ? (
+        {tab === 'Account' ? null : campaign ? (
           <>
             {tab === 'Dashboard' && (
               <Overview campaign={campaign} busy={busy} action={action} navigate={navigate} />
@@ -1521,8 +1725,8 @@ function Overview({ campaign: c, busy, action, navigate }) {
         <Progress total={c.totals.grossCents} goal={c.goalCents} />
         <div className="campaign-actions">
           {c.status === 'draft' && (
-            <button disabled={busy} onClick={() => action('launch')}>
-              Launch campaign →
+            <button disabled={busy || c.preparationOnly} onClick={() => action('launch')}>
+              {c.preparationOnly ? 'Launch disabled during preparation' : 'Launch campaign →'}
             </button>
           )}
           {c.status === 'active' && (
@@ -1537,7 +1741,9 @@ function Overview({ campaign: c, busy, action, navigate }) {
           )}
           {c.status === 'draft' && (
             <small>
-              Launch queues invitations for completed, approved athletes. No real email is sent.
+              {c.preparationOnly
+                ? 'Campaign drafts can be prepared. Public fundraising and invitations remain closed.'
+                : 'Launch queues invitations for completed, approved athletes. No real email is sent.'}
             </small>
           )}
         </div>
@@ -2304,7 +2510,7 @@ function EmailActivity({ campaign: c, mutate, base, busy, destination }) {
     [reason, setReason] = useState('unsubscribe');
   return (
     <>
-      <details className="prototype-testing compact-disclosure">
+      <details className="prototype-testing compact-disclosure" hidden={c.preparationOnly}>
         <summary>
           <strong>Prototype testing</strong> <span>Simulated sends and campaign clock</span>
         </summary>
@@ -2649,6 +2855,7 @@ function Settings({ campaign: c, mutate, base, busy, action, destination }) {
               <input
                 type="file"
                 accept="image/png,image/jpeg,image/webp"
+                disabled={c.preparationOnly}
                 onChange={(e) => uploadLogo(e.target.files[0])}
               />
             </Field>
@@ -2693,6 +2900,7 @@ function Settings({ campaign: c, mutate, base, busy, action, destination }) {
               <label className="check-label">
                 <input
                   type="checkbox"
+                  disabled={c.preparationOnly}
                   checked={form.paymentSettings[method].enabled}
                   onChange={(e) => changePayment(method, 'enabled', e.target.checked)}
                 />
@@ -2922,6 +3130,7 @@ function Settings({ campaign: c, mutate, base, busy, action, destination }) {
   );
 }
 export default function App() {
+  const { data: runtime } = useResource('/api/runtime');
   const [path, setPath] = useState(location.pathname);
   useEffect(() => {
     const changed = () => setPath(location.pathname);
@@ -2942,8 +3151,12 @@ export default function App() {
     <>
       <div className="prototype-banner">
         <span className="sim-dot" />
-        <strong>REVIEW PROTOTYPE</strong>
-        <span>Payments & email delivery are simulated. Use fictional data only.</span>
+        <strong>{runtime?.mode === 'pilot' ? 'TVVC PILOT PREPARATION' : 'REVIEW PROTOTYPE'}</strong>
+        <span>
+          {runtime?.mode === 'pilot'
+            ? 'Public fundraising, payments & email are disabled.'
+            : 'Payments & email delivery are simulated. Use fictional data only.'}
+        </span>
       </div>
       <header className="site-header">
         <Link className="brand" href="/" aria-label="Rally Fund home">
@@ -2965,7 +3178,11 @@ export default function App() {
           RALLY<span>FUND</span>
         </Link>
         <p>Built for the team. Powered by the community.</p>
-        <small>First milestone · local simulator · 0% platform percentage</small>
+        <small>
+          {runtime?.mode === 'pilot'
+            ? 'TVVC pilot preparation · fundraising is not open'
+            : 'First milestone · local simulator · 0% platform percentage'}
+        </small>
       </footer>
     </>
   );

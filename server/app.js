@@ -1,6 +1,14 @@
 import express from 'express';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import {
+  addAdmin,
+  checkPassword,
+  publicAdmin,
+  updateAdmin,
+  replacePassword,
+  normalizeEmail,
+} from './pilot/admin.js';
 import { writeSnapshot } from './store.js';
 import {
   Fundraiser,
@@ -19,7 +27,10 @@ export function createApp({
   hosted = false,
   allowedOrigins = [],
   staticFiles = true,
+  pilot = false,
+  clientIp = null,
 } = {}) {
+  if (pilot && !seed) throw new Error('Pilot requires an initialized database.');
   let state;
   let links = {};
   let auth = seed?.auth;
@@ -70,7 +81,10 @@ export function createApp({
       'Content-Security-Policy':
         "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     });
-    if (req.path.startsWith('/api') && !['GET', 'HEAD'].includes(req.method)) {
+    if (
+      (pilot ? req.path.toLowerCase() : req.path).startsWith('/api') &&
+      !['GET', 'HEAD'].includes(req.method)
+    ) {
       if (req.get('X-Prototype') !== 'local')
         return res.status(403).json({ error: 'Prototype request header required.' });
       const origin = req.get('origin');
@@ -94,6 +108,45 @@ export function createApp({
     next();
   });
   app.use(express.json({ limit: '3mb' }));
+  if (pilot)
+    app.use('/api', (req, res, next) => {
+      // Express accepts mixed case and trailing slashes by default. Apply the
+      // service gates to the same effective route, including those variants.
+      const endpoint = req.path.toLowerCase().replace(/\/+$/, '');
+      if (
+        !['GET', 'HEAD'].includes(req.method) &&
+        (!req.body || typeof req.body !== 'object' || Array.isArray(req.body))
+      )
+        return res.status(400).json({ error: 'A JSON object is required.' });
+      const disabled = () =>
+        res.status(403).json({
+          error:
+            'The TVVC pilot is in preparation. Public fundraising, payments and email are disabled.',
+        });
+      if (
+        !['/runtime', '/examples', '/login', '/logout', '/session'].includes(endpoint) &&
+        !endpoint.startsWith('/admin')
+      )
+        return disabled();
+      if (
+        req.method !== 'GET' &&
+        (/\/ledger\//.test(endpoint) ||
+          /\/jobs\//.test(endpoint) ||
+          (endpoint.endsWith('/action') && req.body.action !== 'close') ||
+          Object.values(req.body.paymentSettings || {}).some((m) => m?.enabled) ||
+          req.body.logo)
+      )
+        return disabled();
+      next();
+    });
+  const validSession = (session) => {
+    if (!session || session.expires < Date.now()) return false;
+    if (!pilot) return true;
+    const user = service.state.users.find(
+      (u) => u.id === session.userId && u.orgId === session.orgId,
+    );
+    return !!user?.active && user.credentialVersion === session.credentialVersion;
+  };
   app.use('/api/admin', (req, res, next) => {
     const raw = req.headers.cookie
       ?.split(';')
@@ -101,9 +154,10 @@ export function createApp({
       .find((s) => s.startsWith('rally_session='))
       ?.slice('rally_session='.length);
     const session = sessions.get(hash(raw || ''));
-    if (!session || session.expires < Date.now())
+    if (!validSession(session))
       return res.status(401).json({ error: 'Administrator sign-in required.' });
     req.session = session;
+    if (pilot) req.session.role = service.state.users.find((u) => u.id === session.userId).role;
     next();
   });
   const route = (fn) => (req, res, next) => {
@@ -129,12 +183,16 @@ export function createApp({
   const detail = (req) => service.detail(req.session.orgId, req.params.id, links);
   app.get(
     '/api/runtime',
-    route(() => ({ hosted, simulation: true })),
+    route(() =>
+      pilot
+        ? { hosted, simulation: false, mode: 'pilot', paymentsEnabled: false, emailEnabled: false }
+        : { hosted, simulation: true },
+    ),
   );
   app.get(
     '/api/examples',
     route(() => ({
-      campaigns: service.state.campaigns.map((c) => ({
+      campaigns: (pilot ? [] : service.state.campaigns).map((c) => ({
         name: c.name,
         slug: c.slug,
         organizationName: c.organizationName,
@@ -144,7 +202,19 @@ export function createApp({
   app.post(
     '/api/login',
     route((req, res) => {
-      const key = hash(req.ip || 'unknown');
+      if (pilot) {
+        const ipKey = hash(`ip:${clientIp || req.ip || 'unknown'}`);
+        const ipAttempt = attempts.get(ipKey) || { count: 0, start: Date.now() };
+        if (Date.now() - ipAttempt.start > 60000) {
+          ipAttempt.count = 0;
+          ipAttempt.start = Date.now();
+        }
+        ipAttempt.count++;
+        attempts.set(ipKey, ipAttempt);
+        if (ipAttempt.count > 60)
+          throw new AppError('Too many sign-in attempts. Try again in a minute.', 429);
+      }
+      const key = hash(pilot ? `account:${normalizeEmail(req.body.email)}` : req.ip || 'unknown');
       const attempt = attempts.get(key) || { count: 0, start: Date.now() };
       if (Date.now() - attempt.start > 60000) {
         attempt.count = 0;
@@ -155,6 +225,12 @@ export function createApp({
       if (attempt.count > 15)
         throw new AppError('Too many sign-in attempts. Try again in a minute.', 429);
       const session = service.login(req.body.email, req.body.password);
+      if (pilot) {
+        const user = service.state.users.find((u) => u.id === session.userId);
+        if (!user.active) throw new AppError('Email or password is incorrect.', 401);
+        session.role = user.role;
+        session.credentialVersion = user.credentialVersion;
+      }
       // Successful sign-ins are not failed attempts. In particular, repeated
       // authenticated review sessions must not trip the brute-force hold.
       attempts.delete(key);
@@ -192,7 +268,7 @@ export function createApp({
         .find((s) => s.startsWith('rally_session='))
         ?.slice('rally_session='.length);
       const session = sessions.get(hash(raw || ''));
-      if (!session || session.expires < Date.now()) throw new AppError('Sign-in required.', 401);
+      if (!validSession(session)) throw new AppError('Sign-in required.', 401);
       return { organization: service.organization(session.orgId) };
     }),
   );
@@ -200,15 +276,68 @@ export function createApp({
     '/api/admin',
     route((req) => ({
       organization: service.organization(req.session.orgId),
+      ...(pilot
+        ? {
+            mode: 'pilot',
+            administrator: publicAdmin(
+              service.state.users.find((u) => u.id === req.session.userId),
+            ),
+          }
+        : {}),
       campaigns: service.state.campaigns
         .filter((c) => c.orgId === req.session.orgId)
         .map((c) => service.detail(c.orgId, c.id, links)),
     })),
   );
+  if (pilot) {
+    app.get(
+      '/api/admin/accounts',
+      route((req) => {
+        if (req.session.role !== 'owner')
+          throw new AppError('Organization owner access required.', 403);
+        return {
+          accounts: service.state.users
+            .filter((u) => u.orgId === req.session.orgId)
+            .map(publicAdmin),
+          activity: service.state.adminAudit.filter((a) => a.orgId === req.session.orgId),
+        };
+      }),
+    );
+    app.post(
+      '/api/admin/accounts',
+      route((req) => {
+        const actor = service.state.users.find((u) => u.id === req.session.userId);
+        if (!checkPassword(actor, req.body.currentPassword))
+          throw new AppError('Current password is incorrect.', 401);
+        return addAdmin(service.state, req.session, req.body);
+      }),
+    );
+    app.patch(
+      '/api/admin/accounts/:userId',
+      route((req) => {
+        const actor = service.state.users.find((u) => u.id === req.session.userId);
+        if (!checkPassword(actor, req.body.currentPassword))
+          throw new AppError('Current password is incorrect.', 401);
+        return updateAdmin(service.state, sessions, req.session, req.params.userId, req.body);
+      }),
+    );
+    app.post(
+      '/api/admin/password',
+      route((req, res) => {
+        const user = service.state.users.find((u) => u.id === req.session.userId);
+        if (!checkPassword(user, req.body.currentPassword))
+          throw new AppError('Current password is incorrect.', 401);
+        replacePassword(service.state, sessions, req.session, user, req.body.password);
+        res.clearCookie('rally_session', { path: '/', secure: hosted, sameSite: 'strict' });
+        return { success: true };
+      }),
+    );
+  }
   app.post(
     '/api/admin/campaigns',
     route((req) => {
       const c = service.createCampaign(req.session.orgId, req.body);
+      if (pilot) for (const method of Object.values(c.paymentSettings)) method.enabled = false;
       return service.detail(c.orgId, c.id, links);
     }),
   );
