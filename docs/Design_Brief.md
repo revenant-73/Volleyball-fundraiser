@@ -1,6 +1,6 @@
 # Prototype interface brief
 
-Build working React application pages. Read C:/Users/loren/.agents/skills/frontend-design/implementation.md. All output must stay inside D:/Websites-Apps/volleyball – fundraiser. Own only src/ files. Root agent builds backend, tests, docs. No generated photo or logo required; use abstract court-line CSS motifs and initials placeholders, uploaded actual photos only.
+Build working React application pages. Read C:/Users/loren/.agents/skills/frontend-design/implementation.md. All output must stay inside D:/Websites-Apps/RallyFund. Own only src/ files. Root agent builds backend, tests, docs. No generated photo or logo required; use abstract court-line CSS motifs and initials placeholders, uploaded actual photos only.
 
 Product: Rally Fund, a local volleyball fundraiser simulator for Century and TVVC. Audience: parents, athletes, coaches and donors. Mobile-first, calm dark athletic design: ink/navy background, cream typography, teal for actions, warm gold accents. Bold system typography. Memorable court-line backdrop, clear progress visualization, generous touch targets, no emoji decoration. Desktop sidebar/admin dashboard, mobile compact navigation. Use responsive tables/cards, accessible field labels, inline errors, clear success states. Never obscure simulation labels.
 

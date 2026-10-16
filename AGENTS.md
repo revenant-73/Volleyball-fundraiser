@@ -1,6 +1,6 @@
 # Volleyball fundraiser workspace
 
-Read Project_Brief.md and README.md before changes. Keep all project files inside this folder. Do not modify the separate TVVC website.
+Read Project_Brief.md and README.md before changes. The current project folder is `D:\Websites-Apps\RallyFund` (moved here on 2026-10-16). Keep all project files inside this folder. Do not modify the separate TVVC website.
 
 This is milestone-one simulation. The user authorized a Netlify hosted review with durable data, and commit/push/deploy to the fundraiser site. Real payments, outbound fundraising email, live payment/email credentials and external payment navigation remain disabled until a later explicit request and completed launch requirements in docs/Live_Launch_Checklist.md. Use fictional data only in local and hosted review environments.
 

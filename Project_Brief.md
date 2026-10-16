@@ -142,4 +142,4 @@ Clearly distinguish working features from simulations. Keep real payments and ou
 
 ## Workspace direction
 
-Initialize a local Git repository in the existing volleyball-fundraiser folder on D:. Keep all project files in this folder. The existing folder is named `D:\Websites-Apps\volleyball – fundraiser` (en dash surrounded by spaces).
+The project was initialized in `D:\Websites-Apps\volleyball – fundraiser` (en dash surrounded by spaces). At the owner's request, the entire project was moved to `D:\Websites-Apps\RallyFund` on 2026-10-16, including its Git repository, local data, private review credentials and Netlify settings. Keep all project files inside `D:\Websites-Apps\RallyFund`.

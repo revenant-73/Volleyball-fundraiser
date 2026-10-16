@@ -9,7 +9,7 @@ Working first milestone for Century High School volleyball and TVVC. The origina
 Node.js 22.12+ and npm are required. From PowerShell:
 
 ```powershell
-Set-Location -LiteralPath 'D:\Websites-Apps\volleyball – fundraiser'
+Set-Location -LiteralPath 'D:\Websites-Apps\RallyFund'
 npm install
 npm run dev
 ```
