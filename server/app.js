@@ -9,6 +9,8 @@ import {
   replacePassword,
   normalizeEmail,
 } from './pilot/admin.js';
+import { publicMedia } from './pilot/media.js';
+import { snapshotBackup } from './pilot/backup.js';
 import { writeSnapshot } from './store.js';
 import {
   Fundraiser,
@@ -29,6 +31,7 @@ export function createApp({
   staticFiles = true,
   pilot = false,
   clientIp = null,
+  pilotServices = null,
 } = {}) {
   if (pilot && !seed) throw new Error('Pilot requires an initialized database.');
   let state;
@@ -165,11 +168,11 @@ export function createApp({
     const previous = mutation ? structuredClone(service.state) : null;
     const oldLinks = mutation ? structuredClone(links) : null;
     const oldSessions = mutation ? structuredClone([...sessions]) : null;
-    try {
-      const result = fn(req, res);
+    const complete = (result) => {
       if (mutation) persist();
       if (!res.headersSent) res.json(result);
-    } catch (err) {
+    };
+    const failed = (err) => {
       if (mutation) {
         service.state = previous;
         links = oldLinks;
@@ -178,6 +181,13 @@ export function createApp({
         if (!res.headersSent) res.removeHeader('Set-Cookie');
       }
       next(err);
+    };
+    try {
+      const result = fn(req, res);
+      if (result && typeof result.then === 'function') return result.then(complete).catch(failed);
+      complete(result);
+    } catch (err) {
+      failed(err);
     }
   };
   const detail = (req) => service.detail(req.session.orgId, req.params.id, links);
@@ -290,6 +300,73 @@ export function createApp({
     })),
   );
   if (pilot) {
+    const storage = () => {
+      if (!pilotServices) throw new AppError('Private storage is not configured.', 503);
+      return pilotServices;
+    };
+    const owner = (req) => {
+      if (req.session.role !== 'owner' || req.session.orgId !== 'tvvc')
+        throw new AppError('TVVC owner access required.', 403);
+    };
+    app.get(
+      '/api/admin/media',
+      route((req) => ({
+        images: service.state.mediaAssets
+          .filter((a) => a.orgId === req.session.orgId)
+          .map(publicMedia),
+      })),
+    );
+    app.post(
+      '/api/admin/media',
+      route(async (req) => storage().media.upload(service.state, req.session, req.body)),
+    );
+    app.get(
+      '/api/admin/media/:mediaId',
+      route(async (req, res) => {
+        const buffer = await storage().media.read(service.state, req.session, req.params.mediaId);
+        res
+          .type('image/webp')
+          .set('Content-Disposition', 'inline; filename="private-image.webp"')
+          .send(buffer);
+      }),
+    );
+    app.patch(
+      '/api/admin/media/:mediaId',
+      route((req) => {
+        if (req.body.action !== 'hide') throw new AppError('Choose hide to revoke image access.');
+        return storage().media.hide(service.state, req.session, req.params.mediaId);
+      }),
+    );
+    app.get(
+      '/api/admin/backups',
+      route(async (req) => {
+        owner(req);
+        return storage().backups.status();
+      }),
+    );
+    app.post(
+      '/api/admin/backups',
+      route(async (req) => {
+        owner(req);
+        const actor = service.state.users.find((u) => u.id === req.session.userId);
+        if (!checkPassword(actor, req.body.currentPassword))
+          throw new AppError('Current password is incorrect.', 401);
+        if (!/^[A-Za-z0-9_-]{8,100}$/.test(req.body.requestId || ''))
+          throw new AppError('A unique backup request ID is required.');
+        return storage().backups.run(snapshotBackup(snapshot()), { requestId: req.body.requestId });
+      }),
+    );
+    app.get(
+      '/api/admin/backups/:backupId/download',
+      route(async (req, res) => {
+        owner(req);
+        const envelope = await storage().backups.download(req.params.backupId);
+        res
+          .type('application/octet-stream')
+          .attachment(`${req.params.backupId}.enc`)
+          .send(envelope);
+      }),
+    );
     app.get(
       '/api/admin/accounts',
       route((req) => {

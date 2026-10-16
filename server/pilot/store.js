@@ -58,6 +58,19 @@ const specs = [
   ['activity', 'activity', [campaign]],
   ['ledger_audit', 'audit', [campaign, field('donation_id', 'donationId')]],
   ['admin_audit', 'adminAudit', [org]],
+  [
+    'media_assets',
+    'mediaAssets',
+    [
+      org,
+      campaign,
+      field('athlete_id', 'athleteId'),
+      field('created_by', 'createdBy'),
+      field('status'),
+      field('request_id', 'requestId'),
+      field('fingerprint'),
+    ],
+  ],
 ];
 
 export async function migratePilot(client) {
@@ -78,9 +91,13 @@ export async function migratePilot(client) {
         sql: 'INSERT INTO pilot_metadata(id,version) VALUES (?,1)',
         args: [PILOT_ID],
       });
-      const initial = createPilotState();
-      await savePilot(tx, createPilotState(), initial, true);
     }
+    if (!tables.includes('media_assets'))
+      await tx.executeMultiple(
+        await readFile(new URL('./media-schema.sql', import.meta.url), 'utf8'),
+      );
+    if (!tables.includes('pilot_metadata'))
+      await savePilot(tx, createPilotState(), createPilotState(), true);
     await tx.commit();
   } catch (error) {
     await tx.rollback().catch(() => {});

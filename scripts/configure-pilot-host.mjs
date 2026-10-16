@@ -9,10 +9,14 @@ const cli =
   path.join(process.env.APPDATA || '', 'npm', 'node_modules', 'netlify-cli', 'bin', 'run.js');
 const run = (args) =>
   execFileSync(process.execPath, [cli, ...args], { stdio: 'pipe', encoding: 'utf8' });
+let step = 'verify site';
 try {
   const site = JSON.parse(run(['api', 'getSite', '--data', JSON.stringify({ siteId })]));
   if (site.id !== siteId || site.name !== 'rallyfund-tvvc-pilot')
     throw new Error('Pilot site mismatch');
+  const existingVariables = JSON.parse(
+    run(['api', 'getEnvVars', '--data', JSON.stringify({ accountId: site.account_slug, siteId })]),
+  );
   const url = validatePilotUrl(process.env.RALLYFUND_TURSO_DATABASE_URL);
   const token = process.env.RALLYFUND_TURSO_AUTH_TOKEN;
   if (!token) throw new Error('Missing pilot token');
@@ -21,15 +25,21 @@ try {
     RALLYFUND_PILOT_ORIGIN: expectedOrigin,
     RALLYFUND_TURSO_DATABASE_URL: url,
     RALLYFUND_TURSO_AUTH_TOKEN: token,
+    ...(process.env.RALLYFUND_STORAGE_KEY
+      ? { RALLYFUND_STORAGE_KEY: process.env.RALLYFUND_STORAGE_KEY }
+      : {}),
   })) {
+    step = `configure ${key}`;
+    const existing = existingVariables.find((entry) => entry.key === key);
+    if (existing && (existing.scopes.length !== 1 || existing.scopes[0] !== 'functions'))
+      throw new Error('Pilot variable scope mismatch');
     run([
       'env:set',
       key,
       value,
       '--site',
       siteId,
-      '--scope',
-      'functions',
+      ...(!existing ? ['--scope', 'functions'] : []),
       '--context',
       'production',
       '--secret',
@@ -38,6 +48,10 @@ try {
   }
   console.log('Pilot-only function configuration saved. Review site link and settings unchanged.');
 } catch (error) {
-  console.error('Pilot host configuration failed.', { name: error.name });
+  console.error('Pilot host configuration failed.', {
+    name: error.name,
+    step,
+    status: error.status,
+  });
   process.exitCode = 1;
 }

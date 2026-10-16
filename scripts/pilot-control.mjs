@@ -6,6 +6,9 @@ import { migratePilot, transactPilot, validatePilotUrl } from '../server/pilot/s
 import { addAdmin, replacePassword, normalizeEmail } from '../server/pilot/admin.js';
 import { exportPilot, restorePilotToEmpty } from '../server/pilot/backup.js';
 import { token } from '../server/domain.js';
+import { storageCipher } from '../server/pilot/encryption.js';
+import { restoreCloudBackupToEmpty } from '../server/pilot/cloud-backup.js';
+import { fileObjectStore } from '../server/pilot/object-store.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const local = path.join(root, '.local', 'pilot');
@@ -66,7 +69,34 @@ try {
   } else if (command === 'backup') {
     const file = path.join(local, `backup-${Date.now()}.json`);
     writeFileSync(file, JSON.stringify(await exportPilot(client)), { flag: 'wx', mode: 0o600 });
-    console.log(`Private backup saved: ${file}`);
+    console.log(
+      `Private database-only backup saved: ${file}. Encrypted cloud recovery files also include private image bytes.`,
+    );
+  } else if (command === 'verify-cloud-recovery') {
+    const file = path.resolve(process.argv[3] || '');
+    if (!file.startsWith(local + path.sep))
+      throw new Error('Choose an encrypted backup inside .local/pilot.');
+    const id = path.basename(file, '.enc');
+    const targetDirectory = path.join(local, `cloud-recovery-${Date.now()}`);
+    mkdirSync(targetDirectory, { recursive: true });
+    const { createClient: localClient } = await import('@libsql/client');
+    const restored = localClient({ url: `file:${path.join(targetDirectory, 'restored.db')}` });
+    try {
+      console.log(
+        JSON.stringify(
+          await restoreCloudBackupToEmpty({
+            client: restored,
+            mediaStore: fileObjectStore(path.join(targetDirectory, 'private-media')),
+            envelope: readFileSync(file, 'utf8'),
+            id,
+            cipher: storageCipher(process.env.RALLYFUND_STORAGE_KEY),
+          }),
+        ),
+      );
+    } finally {
+      restored.close();
+    }
+    console.log(`Encrypted database/media recovery verified locally: ${targetDirectory}`);
   } else if (command === 'verify-recovery') {
     const file = path.resolve(process.argv[3] || '');
     if (!file.startsWith(local + path.sep)) throw new Error('Choose a backup inside .local/pilot.');

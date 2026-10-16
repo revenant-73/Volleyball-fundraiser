@@ -2981,6 +2981,26 @@ select:disabled {
 .account-settings .contact-list {
   overflow-wrap: anywhere;
 }
+.private-media-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: 20px;
+  margin-top: 24px;
+}
+.private-media-grid article {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.private-media-grid img {
+  display: block;
+  width: 100%;
+  height: 180px;
+  object-fit: contain;
+}
+.pilot-operations h3 {
+  margin-top: 28px;
+}
 
 .simplified-admin .template-item > summary,
 .simplified-admin .settings-method > summary {

@@ -1,6 +1,6 @@
 # TVVC pilot foundation
 
-This is a separate preparation environment. It is not accepting donations or sending email. Use fictional campaign, donor and athlete information for rehearsals. The owner account is the explicitly authorized individual account; no review identities or sample campaigns are copied into the pilot.
+This is a separate preparation environment. It is not accepting donations or sending email. Use fictional campaign, donor and athlete information for rehearsals. The owner account is the explicitly authorized individual account; no review identities or sample campaigns are copied into the pilot. Automated encrypted cloud backups and the admin-only Media library are documented in [TVVC Pilot Storage](TVVC_Pilot_Storage.md).
 
 ## Environments
 
@@ -40,7 +40,7 @@ npm run pilot:control -- recover-owner
 
 ## Service gates
 
-Pilot mode blocks public campaign/athlete/receipt access, donation creation, mock payment events, payment reporting/reconciliation, campaign launch/resume and simulator workers on the server. Draft payment methods start disabled and cannot be enabled through the API. Public campaign discovery is empty. Pilot navigation exposes draft preparation and Account controls; athlete onboarding and public fundraising are deferred. Photo/logo upload is disabled until private media handling is implemented. The underlying review simulator remains functional in review mode.
+Pilot mode blocks public campaign/athlete/receipt access, donation creation, mock payment events, payment reporting/reconciliation, campaign launch/resume and simulator workers on the server. Draft payment methods start disabled and cannot be enabled through the API. Public campaign discovery is empty. Pilot navigation exposes draft preparation, Account, Media and owner-only Operations controls. Media uploads are private staged assets; publishing into campaign/athlete profiles, athlete onboarding and public fundraising remain deferred. The underlying review simulator remains functional in review mode.
 
 There is no switch for enabling live fundraising in this milestone. Stripe and email transports are not implemented. No payment/email credentials, external payment navigation, donor email or invitation email have been configured. Completing this milestone does not satisfy the remaining [live launch checklist](Live_Launch_Checklist.md).
 
@@ -65,7 +65,7 @@ npm run pilot:control -- backup
 npm run pilot:control -- verify-recovery .local/pilot/backup-<timestamp>.json
 ```
 
-Backups contain private data, password hashes and capability values. They are ignored local files and must be protected; the checksum detects accidental corruption, not deliberate modification. A rehearsal restores into a new local database, verifies the content checksum, SQLite integrity and foreign keys, and never overwrites the live database. Restored sessions and login lockouts are discarded. Restoring a real environment requires a separate controlled cutover; no in-place restore command is provided. Automated backup scheduling, encrypted off-device copies and retention policy remain launch requirements.
+These legacy local exports are database-only, contain private data, password hashes and capability values, and must be protected; their checksum detects accidental corruption, not deliberate modification. Restored sessions and login lockouts are discarded. Automated encrypted off-device recovery files now include both database and private media. Their schedule, key management and complete recovery rehearsal are described in [TVVC Pilot Storage](TVVC_Pilot_Storage.md). Retention/deletion approval and a controlled live cutover remain launch requirements; no in-place restore command is provided.
 
 ## Verification
 
@@ -75,4 +75,4 @@ Backups contain private data, password hashes and capability values. They are ig
 - `npm run build`, `npm run format:check`, `npm audit`.
 - `node scripts/verify-pilot.mjs .local/pilot/bootstrap-<timestamp>.json`: hosted owner login, concurrent durable sessions, secure cookie flags, logout, foreign-origin rejection, service gates, 390px/desktop Account UI and unchanged review runtime mode. Screenshots are under ignored `artifacts/pilot`.
 
-Physical-phone/Safari testing, MFA, private media, approved retention/deletion, scheduled off-device backups, provider integrations and a live-launch decision remain outstanding. Do not collect real donor or athlete information yet.
+Physical-phone/Safari testing, MFA, approved retention/deletion, provider integrations and a live-launch decision remain outstanding. Keep a secure offline copy of the storage recovery key. Do not collect real donor or athlete information yet.

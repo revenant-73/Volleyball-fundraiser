@@ -106,4 +106,6 @@ The browser suite uses Chromium with a real 390px browser viewport and desktop v
 
 The separate TVVC production-foundation pilot now has a Turso relational schema and individual owner/admin access. It remains in preparation with public fundraising, payments and email blocked. The existing review environment is preserved. Setup, recovery, verification, deployment boundaries and remaining limitations are documented in [TVVC Pilot Foundation](docs/TVVC_Pilot_Foundation.md).
 
+The pilot also has encrypted daily cloud backups with private image recovery and an authenticated staged Media library. Owner-only Operations shows backup health and encrypted downloads. See [TVVC Pilot Storage](docs/TVVC_Pilot_Storage.md) for recovery-key custody, retention boundaries and verification. Public media publishing and real donor/athlete collection remain closed.
+
 Configure verified organization identities/branding, approved external payment destinations/instructions, live Stripe account/webhook, provider-approved contact permission and email delivery, authenticated production admin access, durable database/outbox/jobs, retention/deletion/backups, guardian authorization, and receipt wording. See the launch checklist for the gate. Live payment/email adapters do not exist in this milestone and cannot be enabled with a settings toggle.

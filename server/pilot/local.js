@@ -6,6 +6,12 @@ import { fileURLToPath } from 'node:url';
 import { createPilotHandler } from './handler.js';
 import { migratePilot, transactPilot } from './store.js';
 import { addAdmin } from './admin.js';
+import { storageCipher } from './encryption.js';
+import { mediaService } from './media.js';
+import { cloudBackupService } from './cloud-backup.js';
+import { fileObjectStore } from './object-store.js';
+import { randomBytes } from 'node:crypto';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const directory = path.resolve(root, process.env.PILOT_TEST_DIR || '.local-pilot');
@@ -26,8 +32,18 @@ if (process.env.PILOT_E2E === '1') {
 }
 const port = Number(process.env.PROTOTYPE_API_PORT || 3102);
 const webPort = Number(process.env.PROTOTYPE_WEB_PORT || 5175);
+const keyFile = path.join(directory, 'storage-key.txt');
+if (!existsSync(keyFile))
+  writeFileSync(keyFile, randomBytes(32).toString('base64'), { flag: 'wx', mode: 0o600 });
+const cipher = storageCipher(readFileSync(keyFile, 'utf8'));
+const mediaStore = fileObjectStore(path.join(directory, 'private-media'));
+const backupStore = fileObjectStore(path.join(directory, 'encrypted-backups'));
 const handler = createPilotHandler({
   client,
+  services: {
+    media: mediaService({ store: mediaStore, cipher }),
+    backups: cloudBackupService({ backupStore, mediaStore, cipher }),
+  },
   origins: [`http://127.0.0.1:${port}`, `http://127.0.0.1:${webPort}`],
 });
 createServer(async (req, res) => {

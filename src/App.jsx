@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
+import { PilotMedia, PilotOperations } from './PilotStorage.jsx';
 
 const money = (value) =>
   new Intl.NumberFormat('en-US', {
@@ -1302,19 +1303,26 @@ function Admin() {
         <div className="eyebrow">Coach’s workspace</div>
         <h2>{data.organization.name || data.organization.displayName || 'Organization'}</h2>
         <nav aria-label="Administrator sections">
-          {(data.mode === 'pilot' ? ['Dashboard', 'Campaign Settings', 'Account'] : adminTabs).map(
-            (item) => (
-              <button
-                key={item}
-                className={tab === item ? 'active' : ''}
-                aria-pressed={tab === item}
-                onClick={() => navigate(item)}
-              >
-                {item}
-                <span aria-hidden="true">{tab === item ? '→' : ''}</span>
-              </button>
-            ),
-          )}
+          {(data.mode === 'pilot'
+            ? [
+                'Dashboard',
+                'Campaign Settings',
+                'Media',
+                ...(data.administrator.role === 'owner' ? ['Operations'] : []),
+                'Account',
+              ]
+            : adminTabs
+          ).map((item) => (
+            <button
+              key={item}
+              className={tab === item ? 'active' : ''}
+              aria-pressed={tab === item}
+              onClick={() => navigate(item)}
+            >
+              {item}
+              <span aria-hidden="true">{tab === item ? '→' : ''}</span>
+            </button>
+          ))}
         </nav>
         <div className="sidebar-bottom">
           <small>
@@ -1413,6 +1421,10 @@ function Admin() {
             }}
           />
         )}
+        {tab === 'Media' && <PilotMedia api={api} Field={Field} Notice={Notice} />}
+        {tab === 'Operations' && data.administrator.role === 'owner' && (
+          <PilotOperations api={api} Field={Field} Notice={Notice} />
+        )}
         {create && (
           <NewCampaign
             onCreate={async (form) => {
@@ -1451,7 +1463,7 @@ function Admin() {
             }}
           />
         )}
-        {tab === 'Account' ? null : campaign ? (
+        {['Account', 'Media', 'Operations'].includes(tab) ? null : campaign ? (
           <>
             {tab === 'Dashboard' && (
               <Overview campaign={campaign} busy={busy} action={action} navigate={navigate} />
@@ -2843,6 +2855,12 @@ function Settings({ campaign: c, mutate, base, busy, action, destination }) {
           </div>
           <div className="logo-editor">
             <h3>Organization logo</h3>
+            {c.preparationOnly && (
+              <Notice>
+                Use Media to stage private images. Adding images to campaign or athlete pages
+                remains disabled.
+              </Notice>
+            )}
             {form.logo ? (
               <img src={form.logo} alt="Configured organization logo preview" />
             ) : (

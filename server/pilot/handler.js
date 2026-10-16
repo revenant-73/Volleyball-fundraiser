@@ -2,7 +2,7 @@ import serverless from 'serverless-http';
 import { createApp } from '../app.js';
 import { transactPilot } from './store.js';
 
-export function createPilotHandler({ client, origins }) {
+export function createPilotHandler({ client, origins, services = null }) {
   return async (request, context = {}) => {
     const url = new URL(request.url);
     if (!origins.includes(url.origin)) return new Response('Unknown pilot host.', { status: 403 });
@@ -18,8 +18,11 @@ export function createPilotHandler({ client, origins }) {
           allowedOrigins: origins,
           staticFiles: false,
           clientIp: context.ip,
+          pilotServices: services,
         });
-        const result = await serverless(runtime.app)(
+        const result = await serverless(runtime.app, {
+          binary: ['image/webp', 'application/octet-stream'],
+        })(
           {
             version: '2.0',
             rawPath: url.pathname,
@@ -38,14 +41,28 @@ export function createPilotHandler({ client, origins }) {
           for (const value of values) headers.append(name, value);
         }
         for (const cookie of result.cookies || []) headers.append('set-cookie', cookie);
-        return new Response(
-          request.method === 'HEAD'
-            ? null
-            : result.isBase64Encoded
-              ? Buffer.from(result.body, 'base64')
-              : result.body,
-          { status: result.statusCode, headers },
-        );
+        const output = result.isBase64Encoded
+          ? Buffer.from(result.body, 'base64')
+          : Buffer.from(result.body || '');
+        let responseBody = output;
+        if (headers.get('content-disposition')?.includes('.enc')) {
+          headers.delete('content-length');
+          let offset = 0;
+          responseBody = new ReadableStream({
+            pull(controller) {
+              if (offset >= output.length) {
+                controller.close();
+                return;
+              }
+              controller.enqueue(output.subarray(offset, offset + 65536));
+              offset += 65536;
+            },
+          });
+        }
+        return new Response(request.method === 'HEAD' ? null : responseBody, {
+          status: result.statusCode,
+          headers,
+        });
       });
     } catch (error) {
       // Never log provider messages, URLs, SQL arguments or capabilities.
