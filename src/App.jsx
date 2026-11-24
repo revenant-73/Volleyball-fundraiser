@@ -249,7 +249,10 @@ function Login({ onLogin }) {
     if (runtime?.mode === 'pilot') {
       setEmail('');
       setPassword('');
-    } else if (runtime && !runtime.hosted) setPassword('prototype-only');
+    } else if (runtime && !runtime.hosted) {
+      setPassword('prototype-only');
+      if (runtime.mode === 'stripe-sandbox') setEmail('coach@tvvc.example');
+    }
   }, [runtime?.hosted, runtime?.mode]);
   return (
     <form
@@ -286,7 +289,9 @@ function Login({ onLogin }) {
         <Field label="Demo organization">
           <select value={email} onChange={(e) => setEmail(e.target.value)}>
             <option value="coach@tvvc.example">TVVC · coach@tvvc.example</option>
-            <option value="coach@century.example">Century · coach@century.example</option>
+            {runtime?.mode !== 'stripe-sandbox' && (
+              <option value="coach@century.example">Century · coach@century.example</option>
+            )}
           </select>
         </Field>
       )}
@@ -340,7 +345,9 @@ function Home() {
           </p>
         </div>
         <div className="hero-footer">
-          {runtime?.mode !== 'pilot' && <span>Century High School</span>}
+          {runtime && !['pilot', 'stripe-sandbox'].includes(runtime.mode) && (
+            <span>Century High School</span>
+          )}
           <span>Tualatin Valley Volleyball Club</span>
         </div>
       </section>
@@ -353,7 +360,9 @@ function Home() {
           <p>
             {runtime?.mode === 'pilot'
               ? 'Public fundraising is not open. Payments and email are disabled while administrators prepare the platform. Use fictional campaign and athlete data for rehearsals.'
-              : 'Sample campaigns start in preparation. Coaches launch them in the simulator. Use fictional contacts and athlete information only.'}
+              : runtime?.mode === 'stripe-sandbox'
+                ? 'Use the private setup link your coach issued, or open the donation link a player shared with you.'
+                : 'Sample campaigns start in preparation. Coaches launch them in the simulator. Use fictional contacts and athlete information only.'}
           </p>
           <Notice kind="error">{error}</Notice>
           {data?.campaigns.map((c) => (
@@ -400,7 +409,7 @@ function Athlete({ token }) {
     try {
       const result = await api(`/api/athlete/${encodeURIComponent(token)}`, 'PATCH', {
         ...profile,
-        emails,
+        ...(!data.stripeSandbox ? { emails } : {}),
         done,
       });
       setData(result);
@@ -455,11 +464,12 @@ function Athlete({ token }) {
       <div className="setup-status">
         <Status value={data.athlete.completed ? 'completed' : 'preparation'} />
         <Status value={data.athlete.approved ? 'approved' : 'approval_pending'} />
-        <span>{data.contacts.length} contacts saved</span>
+        {!data.stripeSandbox && <span>{data.contacts.length} contacts saved</span>}
       </div>
       <Notice>
-        Keep this private setup link to resume. Share only your public fundraising link. Preparation
-        never sends donor emails.
+        {data.stripeSandbox
+          ? 'Keep this setup link private. Once your coach approves your profile, you can share your donation link directly.'
+          : 'Keep this private setup link to resume. Share only your public fundraising link. Preparation never sends donor emails.'}
       </Notice>
       <form
         onSubmit={(e) => {
@@ -467,39 +477,41 @@ function Athlete({ token }) {
           save(true);
         }}
       >
+        {!data.stripeSandbox && (
+          <section className="setup-step">
+            <span className="step-number">01</span>
+            <div>
+              <h2>Bring your supporters.</h2>
+              <p>Twenty addresses is a helpful recommendation. Any number is welcome.</p>
+              <Field
+                label="Paste donor email addresses"
+                hint="Separate with spaces, commas, semicolons, or new lines. Duplicates are safely combined."
+              >
+                <textarea
+                  rows="5"
+                  value={emails}
+                  onChange={(e) => setEmails(e.target.value)}
+                  placeholder="supporter@example.test, family@example.test"
+                />
+              </Field>
+              {data.contacts.length > 0 && (
+                <details>
+                  <summary>Your saved contacts ({data.contacts.length})</summary>
+                  <ul className="contact-list">
+                    {data.contacts.map((email) => (
+                      <li key={email}>{email}</li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+              <button type="button" className="secondary" disabled={busy} onClick={() => save()}>
+                Save progress
+              </button>
+            </div>
+          </section>
+        )}
         <section className="setup-step">
-          <span className="step-number">01</span>
-          <div>
-            <h2>Bring your supporters.</h2>
-            <p>Twenty addresses is a helpful recommendation. Any number is welcome.</p>
-            <Field
-              label="Paste donor email addresses"
-              hint="Separate with spaces, commas, semicolons, or new lines. Duplicates are safely combined."
-            >
-              <textarea
-                rows="5"
-                value={emails}
-                onChange={(e) => setEmails(e.target.value)}
-                placeholder="supporter@example.test, family@example.test"
-              />
-            </Field>
-            {data.contacts.length > 0 && (
-              <details>
-                <summary>Your saved contacts ({data.contacts.length})</summary>
-                <ul className="contact-list">
-                  {data.contacts.map((email) => (
-                    <li key={email}>{email}</li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            <button type="button" className="secondary" disabled={busy} onClick={() => save()}>
-              Save progress
-            </button>
-          </div>
-        </section>
-        <section className="setup-step">
-          <span className="step-number">02</span>
+          <span className="step-number">{data.stripeSandbox ? '01' : '02'}</span>
           <div>
             <h2>Put a face to the rally.</h2>
             <p>Optional. Use a photo you have permission to share publicly.</p>
@@ -533,7 +545,7 @@ function Athlete({ token }) {
           </div>
         </section>
         <section className="setup-step">
-          <span className="step-number">03</span>
+          <span className="step-number">{data.stripeSandbox ? '02' : '03'}</span>
           <div>
             <h2>Make it personal.</h2>
             <Field
@@ -732,7 +744,7 @@ function PublicPage({ slug, athleteId }) {
     a = data.athlete,
     p = c.paymentSettings,
     enabled = Object.keys(methodNames).filter((k) => p[k]?.enabled),
-    active = c.status === 'active' || c.status === 'paused',
+    active = !data.donationsStopped && (c.status === 'active' || c.status === 'paused'),
     sandbox = data.stripeSandbox === true;
   const paymentName = (method) =>
     sandbox && method === 'stripe' ? 'Card · Stripe sandbox' : methodNames[method];
@@ -820,11 +832,13 @@ function PublicPage({ slug, athleteId }) {
           )}
           {!active && (
             <Notice>
-              {c.status === 'draft'
-                ? 'Campaign preview. Contributions open after the coach launches.'
-                : c.status === 'paused'
-                  ? 'Fundraising is paused. Check back after the coach resumes.'
-                  : 'This campaign is closed to new donations.'}
+              {data.donationsStopped
+                ? 'This campaign has stopped accepting test donations.'
+                : c.status === 'draft'
+                  ? 'Campaign preview. Contributions open after the coach launches.'
+                  : c.status === 'paused'
+                    ? 'Fundraising is paused. Check back after the coach resumes.'
+                    : 'This campaign is closed to new donations.'}
             </Notice>
           )}
           {receipt ? (
@@ -942,7 +956,7 @@ function PublicPage({ slug, athleteId }) {
                 Return to donation form
               </button>
             </section>
-          ) : (
+          ) : !data.donationsStopped ? (
             <form onSubmit={give}>
               <Field label="Contribution amount ($)">
                 <div className="amount-options">
@@ -995,7 +1009,7 @@ function PublicPage({ slug, athleteId }) {
                   value={form.athleteId}
                   onChange={(e) => setForm({ ...form, athleteId: e.target.value })}
                 >
-                  <option value="">General campaign support</option>
+                  {!sandbox && <option value="">General campaign support</option>}
                   {data.athletes.map((athlete) => (
                     <option key={athlete.id} value={athlete.id} disabled={!athlete.fundraisingOpen}>
                       {athlete.displayName}
@@ -1053,7 +1067,7 @@ function PublicPage({ slug, athleteId }) {
               </small>
               <p className="receipt-wording">{c.receiptWording}</p>
             </form>
-          )}
+          ) : null}
           <Notice kind="error">{receipt && failure}</Notice>
         </section>
         <aside className="supporters">
@@ -1340,6 +1354,7 @@ function Admin() {
     [duplicate, setDuplicate] = useState(false),
     [destination, setDestination] = useState({ filter: 'all', key: 0 });
   const selectedCampaign = data?.campaigns.find((c) => c.id === selected) || data?.campaigns[0];
+  const stripeSandbox = data?.mode === 'stripe-sandbox';
   const campaign =
     data?.mode === 'pilot' && selectedCampaign
       ? { ...selectedCampaign, preparationOnly: true }
@@ -1396,7 +1411,9 @@ function Admin() {
                 ...(data.administrator.role === 'owner' ? ['Operations'] : []),
                 'Account',
               ]
-            : adminTabs
+            : stripeSandbox
+              ? ['Dashboard', 'Athletes', 'Donations', 'Dues']
+              : adminTabs
           ).map((item) => (
             <button
               key={item}
@@ -1448,39 +1465,41 @@ function Admin() {
               ))}
             </select>
           </Field>
-          <div className="campaign-tools">
-            <button
-              className="secondary compact"
-              aria-expanded={create}
-              onClick={() => {
-                setCreate(!create);
-                setDuplicate(false);
-              }}
-            >
-              + New campaign
-            </button>
-            {campaign && (
+          {!stripeSandbox && (
+            <div className="campaign-tools">
               <button
                 className="secondary compact"
-                aria-expanded={duplicate}
+                aria-expanded={create}
                 onClick={() => {
-                  setDuplicate(!duplicate);
-                  setCreate(false);
+                  setCreate(!create);
+                  setDuplicate(false);
                 }}
               >
-                Duplicate
+                + New campaign
               </button>
-            )}
-            {campaign && !campaign.preparationOnly && (
-              <Link
-                className="button secondary compact"
-                href={`/c/${campaign.slug}`}
-                target="_blank"
-              >
-                Preview public page ↗
-              </Link>
-            )}
-          </div>
+              {campaign && (
+                <button
+                  className="secondary compact"
+                  aria-expanded={duplicate}
+                  onClick={() => {
+                    setDuplicate(!duplicate);
+                    setCreate(false);
+                  }}
+                >
+                  Duplicate
+                </button>
+              )}
+              {campaign && !campaign.preparationOnly && (
+                <Link
+                  className="button secondary compact"
+                  href={`/c/${campaign.slug}`}
+                  target="_blank"
+                >
+                  Preview public page ↗
+                </Link>
+              )}
+            </div>
+          )}
         </div>
         <header className="admin-title">
           <h1 ref={sectionHeading} tabIndex="-1">
@@ -1576,9 +1595,22 @@ function Admin() {
         )}
         {['Account', 'Media', 'Operations', 'Dues'].includes(tab) ? null : campaign ? (
           <>
-            {tab === 'Dashboard' && (
-              <Overview campaign={campaign} busy={busy} action={action} navigate={navigate} />
-            )}
+            {tab === 'Dashboard' &&
+              (stripeSandbox ? (
+                <SandboxCampaign
+                  campaign={campaign}
+                  busy={busy}
+                  navigate={navigate}
+                  open={() =>
+                    mutate(`${base}/action`, 'POST', { action: 'launch' }, 'Test donations opened.')
+                  }
+                  stop={() =>
+                    mutate(`${base}/stop-donations`, 'POST', {}, 'New test donations stopped.')
+                  }
+                />
+              ) : (
+                <Overview campaign={campaign} busy={busy} action={action} navigate={navigate} />
+              ))}
             {tab === 'Athletes' && (
               <Athletes
                 key={campaign.id}
@@ -1587,6 +1619,7 @@ function Admin() {
                 base={base}
                 busy={busy}
                 destination={destination}
+                stripeSandbox={stripeSandbox}
               />
             )}
             {tab === 'Donations' && (
@@ -1600,17 +1633,19 @@ function Admin() {
                 destination={destination}
               />
             )}
-            <div hidden={tab !== 'Campaign Settings'}>
-              <Settings
-                key={campaign.id}
-                campaign={campaign}
-                mutate={mutate}
-                base={base}
-                busy={busy}
-                action={action}
-                destination={destination}
-              />
-            </div>
+            {!stripeSandbox && (
+              <div hidden={tab !== 'Campaign Settings'}>
+                <Settings
+                  key={campaign.id}
+                  campaign={campaign}
+                  mutate={mutate}
+                  base={base}
+                  busy={busy}
+                  action={action}
+                  destination={destination}
+                />
+              </div>
+            )}
           </>
         ) : (
           <Empty>Create your first campaign to get started.</Empty>
@@ -1802,6 +1837,58 @@ function EmailSummary({ campaign: c, onDetails }) {
     </section>
   );
 }
+function SandboxCampaign({ campaign, busy, navigate, open, stop }) {
+  const ready = campaign.athletes.some((a) => a.completed && a.approved);
+  const stopped = Boolean(campaign.donationsStoppedAt);
+  return (
+    <section className="panel">
+      <h2>Stripe test donations</h2>
+      {stopped ? (
+        <>
+          <Notice>
+            New test donations are stopped. Stripe payments already completed can still reconcile.
+          </Notice>
+          {campaign.checkoutsToClose > 0 && (
+            <>
+              <Notice kind="error">
+                Stripe has not confirmed closure of {campaign.checkoutsToClose} checkout(s).
+              </Notice>
+              <button disabled={busy} onClick={stop}>
+                Retry closing checkouts
+              </button>
+            </>
+          )}
+        </>
+      ) : campaign.status === 'draft' ? (
+        <>
+          <p>
+            Issue the fictional player a private setup link, then review guardian permission and
+            approve their profile.
+          </p>
+          <div className="button-row">
+            <button className="secondary" onClick={() => navigate('Athletes')}>
+              Open player setup
+            </button>
+            <button disabled={busy || !ready} onClick={open}>
+              Open test donations
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p>
+            Test donations are open. Stopping blocks new checkouts and expires open Stripe checkouts
+            for this campaign.
+          </p>
+          <button className="danger-button" disabled={busy} onClick={stop}>
+            Stop test donations
+          </button>
+        </>
+      )}
+    </section>
+  );
+}
+
 function Overview({ campaign: c, busy, action, navigate }) {
   const approved = c.athletes.filter((a) => a.approved && a.completed).length;
   const stories = c.athletes.filter((a) => a.completed && !a.approved).length;
@@ -1957,7 +2044,7 @@ function Overview({ campaign: c, busy, action, navigate }) {
     </>
   );
 }
-function Athletes({ campaign: c, mutate, base, busy, destination }) {
+function Athletes({ campaign: c, mutate, base, busy, destination, stripeSandbox }) {
   const [filter, setFilter] = useState(destination.filter);
   useEffect(() => setFilter(destination.filter), [destination.key]);
   const athletes = c.athletes.filter((a) =>
@@ -1975,110 +2062,112 @@ function Athletes({ campaign: c, mutate, base, busy, destination }) {
     [notes, setNotes] = useState({});
   return (
     <>
-      <details className="panel add-athletes compact-disclosure">
-        <summary>
-          <strong>Add athletes</strong> <span>Single entry or CSV import</span>
-        </summary>
-        <div className="overview-columns">
-          <form
-            className="panel"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              const r = await mutate(
-                `${base}/athletes`,
-                'POST',
-                form,
-                'Athlete added. Save their private invitation link.',
-              );
-              if (r) {
-                setResult(r);
-                setForm({ name: '', displayName: '', team: '' });
-              }
-            }}
-          >
-            <h2>Add an athlete</h2>
-            <Field
-              label="Private full name"
-              required
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-            />
-            <div className="form-grid">
+      {!stripeSandbox && (
+        <details className="panel add-athletes compact-disclosure">
+          <summary>
+            <strong>Add athletes</strong> <span>Single entry or CSV import</span>
+          </summary>
+          <div className="overview-columns">
+            <form
+              className="panel"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const r = await mutate(
+                  `${base}/athletes`,
+                  'POST',
+                  form,
+                  'Athlete added. Save their private invitation link.',
+                );
+                if (r) {
+                  setResult(r);
+                  setForm({ name: '', displayName: '', team: '' });
+                }
+              }}
+            >
+              <h2>Add an athlete</h2>
               <Field
-                label="Public display name"
+                label="Private full name"
                 required
-                value={form.displayName}
-                onChange={(e) => setForm({ ...form, displayName: e.target.value })}
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
-              <Field
-                label="Team"
-                value={form.team}
-                onChange={(e) => setForm({ ...form, team: e.target.value })}
-              />
-            </div>
-            <button disabled={busy}>Add & create secure invitation</button>
-            {result?.privatePath && (
-              <div className="private-link">
-                <strong>Private invitation · only share with this athlete</strong>
-                <Link href={result.privatePath} target="_blank">
-                  Open athlete setup ↗
-                </Link>
-                <input
-                  aria-label="New private invitation URL"
-                  readOnly
-                  value={pathUrl(result.privatePath)}
+              <div className="form-grid">
+                <Field
+                  label="Public display name"
+                  required
+                  value={form.displayName}
+                  onChange={(e) => setForm({ ...form, displayName: e.target.value })}
+                />
+                <Field
+                  label="Team"
+                  value={form.team}
+                  onChange={(e) => setForm({ ...form, team: e.target.value })}
                 />
               </div>
-            )}
-          </form>
-          <form
-            className="panel"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              const r = await mutate(
-                `${base}/import`,
-                'POST',
-                { csv },
-                'CSV checked. Review import results.',
-              );
-              if (r) setResult(r);
-            }}
-          >
-            <h2>Import your roster</h2>
-            <Field
-              label="CSV roster"
-              hint="Required headers: name,displayName,team. The whole file is validated before anyone is added."
-            >
-              <textarea
-                rows="6"
-                spellCheck="false"
-                value={csv}
-                onChange={(e) => setCsv(e.target.value)}
-              />
-            </Field>
-            <input
-              aria-label="Upload roster CSV"
-              type="file"
-              accept=".csv,text/csv"
-              onChange={async (e) => {
-                if (e.target.files[0]) setCsv(await e.target.files[0].text());
+              <button disabled={busy}>Add & create secure invitation</button>
+              {result?.privatePath && (
+                <div className="private-link">
+                  <strong>Private invitation · only share with this athlete</strong>
+                  <Link href={result.privatePath} target="_blank">
+                    Open athlete setup ↗
+                  </Link>
+                  <input
+                    aria-label="New private invitation URL"
+                    readOnly
+                    value={pathUrl(result.privatePath)}
+                  />
+                </div>
+              )}
+            </form>
+            <form
+              className="panel"
+              onSubmit={async (e) => {
+                e.preventDefault();
+                const r = await mutate(
+                  `${base}/import`,
+                  'POST',
+                  { csv },
+                  'CSV checked. Review import results.',
+                );
+                if (r) setResult(r);
               }}
-            />
-            <button disabled={busy}>Validate & import</button>
-            {result?.errors?.map((item, i) => (
-              <Notice key={i} kind="error">
-                Row {item.row}: {item.error}
-              </Notice>
-            ))}
-            {result?.imported && (
-              <Notice>
-                {result.imported.length} athlete(s) imported. Private links are listed with each
-                athlete below.
-              </Notice>
-            )}
-          </form>
-        </div>
-      </details>
+            >
+              <h2>Import your roster</h2>
+              <Field
+                label="CSV roster"
+                hint="Required headers: name,displayName,team. The whole file is validated before anyone is added."
+              >
+                <textarea
+                  rows="6"
+                  spellCheck="false"
+                  value={csv}
+                  onChange={(e) => setCsv(e.target.value)}
+                />
+              </Field>
+              <input
+                aria-label="Upload roster CSV"
+                type="file"
+                accept=".csv,text/csv"
+                onChange={async (e) => {
+                  if (e.target.files[0]) setCsv(await e.target.files[0].text());
+                }}
+              />
+              <button disabled={busy}>Validate & import</button>
+              {result?.errors?.map((item, i) => (
+                <Notice key={i} kind="error">
+                  Row {item.row}: {item.error}
+                </Notice>
+              ))}
+              {result?.imported && (
+                <Notice>
+                  {result.imported.length} athlete(s) imported. Private links are listed with each
+                  athlete below.
+                </Notice>
+              )}
+            </form>
+          </div>
+        </details>
+      )}
       <section className="panel">
         <div className="section-heading">
           <h2>Athlete roster</h2>
@@ -2173,12 +2262,16 @@ function Athletes({ campaign: c, mutate, base, busy, destination }) {
                       `${base}/athletes/${a.id}/invite`,
                       'POST',
                       {},
-                      'Invitation rotated. Previous link is revoked.',
+                      a.privatePath
+                        ? 'Invitation rotated. Previous link is revoked.'
+                        : 'Private setup link issued.',
                     );
                     if (r) setResult(r);
                   }}
                 >
-                  Rotate private link
+                  {stripeSandbox && !a.privatePath
+                    ? 'Issue private setup link'
+                    : 'Rotate private link'}
                 </button>
                 <button
                   className="danger-button"
@@ -2194,25 +2287,33 @@ function Athletes({ campaign: c, mutate, base, busy, destination }) {
                 >
                   Revoke private link
                 </button>
-                <Link className="button secondary" href={`/c/${c.slug}/a/${a.id}`} target="_blank">
-                  Public page ↗
-                </Link>
+                {(!stripeSandbox || a.approved) && (
+                  <Link
+                    className="button secondary"
+                    href={`/c/${c.slug}/a/${a.id}`}
+                    target="_blank"
+                  >
+                    Public page ↗
+                  </Link>
+                )}
               </div>
-              <details className="athlete-contacts">
-                <summary>
-                  Donor contacts (
-                  {c.contacts.filter((contact) => contact.athleteIds.includes(a.id)).length})
-                </summary>
-                <ul className="contact-list">
-                  {c.contacts
-                    .filter((contact) => contact.athleteIds.includes(a.id))
-                    .map((contact) => (
-                      <li key={contact.id}>
-                        {contact.email} · {contact.state}
-                      </li>
-                    ))}
-                </ul>
-              </details>
+              {!stripeSandbox && (
+                <details className="athlete-contacts">
+                  <summary>
+                    Donor contacts (
+                    {c.contacts.filter((contact) => contact.athleteIds.includes(a.id)).length})
+                  </summary>
+                  <ul className="contact-list">
+                    {c.contacts
+                      .filter((contact) => contact.athleteIds.includes(a.id))
+                      .map((contact) => (
+                        <li key={contact.id}>
+                          {contact.email} · {contact.state}
+                        </li>
+                      ))}
+                  </ul>
+                </details>
+              )}
               {a.privatePath && (
                 <div className="private-link">
                   <strong>Private editing link — athlete only</strong>
@@ -2302,7 +2403,11 @@ function Ledger({ campaign: c, mutate, base, busy, error, destination }) {
                   )}
                   {d.disputeCents > 0 && <small>Disputed: {money(d.disputeCents)}</small>}
                 </td>
-                <td data-label="Method">{methodNames[d.method]}</td>
+                <td data-label="Method">
+                  {d.paymentProvider === 'stripe-sandbox'
+                    ? 'Stripe sandbox'
+                    : methodNames[d.method]}
+                </td>
                 <td data-label="Status">
                   <Status value={d.status} />
                   {d.status === 'pending' && d.reported === false && (
@@ -2317,9 +2422,13 @@ function Ledger({ campaign: c, mutate, base, busy, error, destination }) {
                   {c.athletes.find((a) => a.id === d.athleteId)?.displayName || 'Campaign'}
                 </td>
                 <td data-label="Review">
-                  <button className="secondary compact" onClick={() => setEditing(d)}>
-                    Review
-                  </button>
+                  {d.paymentProvider === 'stripe-sandbox' ? (
+                    'Reconciled from Stripe'
+                  ) : (
+                    <button className="secondary compact" onClick={() => setEditing(d)}>
+                      Review
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}

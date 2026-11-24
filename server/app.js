@@ -15,11 +15,15 @@ import { writeSnapshot } from './store.js';
 import { changeDues, createDuesRehearsal, duesExport, familySummary } from './dues.js';
 import {
   STRIPE_SANDBOX,
+  assertSandboxDonationsOpen,
   attachCheckout,
   checkoutRecord,
+  pendingSandboxCheckouts,
   reconcileStripePayment,
+  recordSandboxCheckoutClosure,
   reserveCheckout,
   sandboxDonation,
+  stopSandboxDonations,
   stripeEventProcessed,
   stripeEventRecord,
 } from './stripe-sandbox.js';
@@ -142,6 +146,20 @@ export function createApp({
       throw error;
     }
   };
+  const checkoutsBeingCreated = new Map();
+  const ensureCheckout = (donation, slug) => {
+    if (!checkoutsBeingCreated.has(donation.id)) {
+      const creation = stripeSandbox
+        .createCheckout(donation, slug)
+        .catch(() => {
+          throw new AppError('Stripe sandbox Checkout is unavailable. Please retry.', 502);
+        })
+        .then((session) => commitStripe(() => attachCheckout(service, donation.id, session)))
+        .finally(() => checkoutsBeingCreated.delete(donation.id));
+      checkoutsBeingCreated.set(donation.id, creation);
+    }
+    return checkoutsBeingCreated.get(donation.id);
+  };
   if (stripeSandbox)
     app.post(
       '/api/stripe-sandbox/webhook',
@@ -210,6 +228,16 @@ export function createApp({
       return res.status(401).json({ error: 'Administrator sign-in required.' });
     req.session = session;
     if (pilot) req.session.role = service.state.users.find((u) => u.id === session.userId).role;
+    if (stripeSandbox && !['GET', 'HEAD'].includes(req.method)) {
+      const endpoint = req.path.toLowerCase().replace(/\/+$/, '');
+      if (
+        req.method !== 'POST' ||
+        !/^\/campaigns\/[^/]+\/(action|stop-donations|athletes\/[^/]+\/(invite|approve)|dues\/[^/]+)$/.test(
+          endpoint,
+        )
+      )
+        return res.status(403).json({ error: 'This sandbox has one fixed fictional campaign.' });
+    }
     next();
   });
   const route = (fn) => (req, res, next) => {
@@ -239,7 +267,11 @@ export function createApp({
       failed(err);
     }
   };
-  const detail = (req) => service.detail(req.session.orgId, req.params.id, links);
+  const campaignDetail = (orgId, id) => ({
+    ...service.detail(orgId, id, links),
+    ...(stripeSandbox ? { checkoutsToClose: pendingSandboxCheckouts(service, id).length } : {}),
+  });
+  const detail = (req) => campaignDetail(req.session.orgId, req.params.id);
   app.get(
     '/api/runtime',
     route(() =>
@@ -251,7 +283,7 @@ export function createApp({
   app.get(
     '/api/examples',
     route(() => ({
-      campaigns: (pilot ? [] : service.state.campaigns).map((c) => ({
+      campaigns: (pilot || stripeSandbox ? [] : service.state.campaigns).map((c) => ({
         name: c.name,
         slug: c.slug,
         organizationName: c.organizationName,
@@ -347,7 +379,7 @@ export function createApp({
           : {}),
       campaigns: service.state.campaigns
         .filter((c) => c.orgId === req.session.orgId)
-        .map((c) => service.detail(c.orgId, c.id, links)),
+        .map((c) => campaignDetail(c.orgId, c.id)),
     })),
   );
   if (pilot) {
@@ -532,10 +564,33 @@ export function createApp({
   app.post(
     '/api/admin/campaigns/:id/action',
     route((req) => {
+      if (stripeSandbox) {
+        const c = service.campaign(req.session.orgId, req.params.id);
+        if (req.body?.action !== 'launch' || c.donationsStoppedAt)
+          throw new AppError('Use the sandbox donation controls on the dashboard.', 409);
+        if (!service.state.athletes.some((a) => a.campaignId === c.id && a.completed && a.approved))
+          throw new AppError('Approve the fictional player before opening test donations.', 409);
+      }
       service.action(req.session.orgId, req.params.id, req.body);
       return detail(req);
     }),
   );
+  if (stripeSandbox)
+    app.post('/api/admin/campaigns/:id/stop-donations', async (req, res) => {
+      const c = service.campaign(req.session.orgId, req.params.id);
+      if (c.status !== 'active') throw new AppError('Test donations have not opened.', 409);
+      commitStripe(() => stopSandboxDonations(service, c));
+      // The persisted stop blocks new reservations immediately. Include requests
+      // that had already reserved a Checkout Session when the coach pressed Stop.
+      await Promise.allSettled(checkoutsBeingCreated.values());
+      await Promise.allSettled(
+        pendingSandboxCheckouts(service, c.id).map(async (donation) => {
+          const status = await stripeSandbox.expireCheckout(donation.stripeCheckout.id);
+          commitStripe(() => recordSandboxCheckoutClosure(service, donation.id, status));
+        }),
+      );
+      res.json(detail(req));
+    });
   app.post(
     '/api/admin/campaigns/:id/athletes',
     route((req) => {
@@ -631,20 +686,36 @@ export function createApp({
       res.type('text/csv').attachment(`${c.slug}-ledger.csv`).send(ledgerCSV(c.ledger));
     }),
   );
+  const setupView = (data) =>
+    stripeSandbox
+      ? {
+          ...data,
+          stripeSandbox: true,
+          publicPath: data.athlete.approved ? data.publicPath : undefined,
+        }
+      : data;
   app.get(
     '/api/athlete/:token',
-    route((req) => service.athleteView(service.athleteByToken(req.params.token))),
+    route((req) => setupView(service.athleteView(service.athleteByToken(req.params.token)))),
   );
   app.patch(
     '/api/athlete/:token',
-    route((req) => service.saveAthlete(req.params.token, req.body)),
+    route((req) => {
+      if (stripeSandbox && req.body?.emails !== undefined)
+        throw new AppError('Donor contact uploads are disabled for this campaign.', 403);
+      return setupView(service.saveAthlete(req.params.token, req.body));
+    }),
   );
   app.get(
     '/api/public/:slug',
-    route((req) => ({
-      ...service.publicView(req.params.slug, req.query.athlete, req.query.contact),
-      ...(stripeSandbox ? { stripeSandbox: true } : {}),
-    })),
+    route((req) => {
+      const view = service.publicView(req.params.slug, req.query.athlete, req.query.contact);
+      if (!stripeSandbox) return view;
+      const c = service.publicCampaign(req.params.slug);
+      if (!view.athlete || !service.findAthlete(c.id, view.athlete.id).approved)
+        throw new AppError('This player’s donation page is awaiting approval.', 404);
+      return { ...view, stripeSandbox: true, donationsStopped: Boolean(c.donationsStoppedAt) };
+    }),
   );
   if (stripeSandbox) {
     app.post('/api/public/:slug/donations', async (req, res) => {
@@ -655,14 +726,12 @@ export function createApp({
       if (donation.status === 'pending' && !donation.stripeCheckout) {
         if (Date.now() - donation.checkoutReservedAt >= 25 * 60 * 1000)
           throw new AppError('This checkout reservation expired. Start a new contribution.', 409);
-        let session;
-        try {
-          session = await stripeSandbox.createCheckout(donation, req.params.slug);
-        } catch {
-          throw new AppError('Stripe sandbox Checkout is unavailable. Please retry.', 502);
-        }
-        donation = commitStripe(() => attachCheckout(service, donation.id, session));
+        await ensureCheckout(donation, req.params.slug);
+        donation = checkoutRecord(service, result.donation.id);
       }
+      assertSandboxDonationsOpen(service.publicCampaign(req.params.slug));
+      if (!service.findAthlete(donation.campaignId, donation.athleteId).approved)
+        throw new AppError('This player’s donation page is awaiting approval.', 409);
       const checkout = donation.stripeCheckout;
       if (donation.status === 'pending' && checkout.expiresAt * 1000 <= Date.now())
         throw new AppError('This Checkout Session expired. Start a new contribution.', 409);

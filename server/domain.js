@@ -834,7 +834,7 @@ export class Fundraiser {
           : {}),
       };
       this.state.ledger.push(d);
-      this.donationContact(c, email);
+      if (!paymentProvider) this.donationContact(c, email);
       this.log(
         c,
         reported ? 'payment-pending' : 'reference-created',
@@ -1197,7 +1197,7 @@ export class Fundraiser {
         })),
       ledger: this.state.ledger
         .filter((x) => x.campaignId === c.id)
-        .map(({ receiptHash, ...x }) => x),
+        .map(({ receiptHash, stripeCheckout, ...x }) => x),
       jobs: this.state.jobs
         .filter((j) => j.campaignId === c.id)
         .map((j) => ({

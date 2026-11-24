@@ -9,9 +9,8 @@ export function createStripeSandboxSeed() {
   const campaign = state.campaigns.find((c) => c.orgId === 'tvvc');
   const player = state.athletes.find((a) => a.campaignId === campaign.id && a.approved);
   Object.assign(campaign, {
-    name: 'Fictional TVVC Stripe rehearsal',
+    name: 'Fictional TVVC invite-only campaign',
     purpose: 'Try a test contribution toward a fictional player’s season dues.',
-    status: 'active',
     goalCents: 100000,
   });
   for (const [method, settings] of Object.entries(campaign.paymentSettings))
@@ -19,7 +18,16 @@ export function createStripeSandboxSeed() {
   state.organizations = state.organizations.filter((o) => o.id === 'tvvc');
   state.users = state.users.filter((u) => u.orgId === 'tvvc');
   state.campaigns = [campaign];
-  Object.assign(player, { inviteHash: null, invitationStatus: 'revoked', contactIds: [] });
+  Object.assign(player, {
+    inviteHash: null,
+    invitationStatus: 'not_issued',
+    completed: false,
+    approved: false,
+    approvedProfile: null,
+    authorization: false,
+    authorizationNote: '',
+    message: '',
+  });
   state.athletes = [player];
   state.contacts = [];
   changeDues(
@@ -43,6 +51,7 @@ export function createStripeSandboxSeed() {
 
 export function reserveCheckout(service, slug, input) {
   const campaign = service.publicCampaign(slug);
+  assertSandboxDonationsOpen(campaign);
   const player = service.findAthlete(campaign.id, input.athleteId);
   if (
     campaign.orgId !== 'tvvc' ||
@@ -67,6 +76,47 @@ export function reserveCheckout(service, slug, input) {
       amount: input.amount,
     },
     STRIPE_SANDBOX,
+  );
+}
+
+export function assertSandboxDonationsOpen(campaign) {
+  if (campaign.donationsStoppedAt || campaign.status !== 'active')
+    throw new AppError('This campaign is closed to new test donations.', 409);
+}
+
+export function stopSandboxDonations(service, campaign) {
+  if (campaign.donationsStoppedAt) return;
+  campaign.donationsStoppedAt = new Date().toISOString();
+  service.log(campaign, 'donations-stopped', 'The coach stopped new Stripe test donations.');
+}
+
+export function pendingSandboxCheckouts(service, campaignId) {
+  return service.state.ledger.filter(
+    (d) =>
+      d.campaignId === campaignId &&
+      d.paymentProvider === STRIPE_SANDBOX &&
+      d.status === 'pending' &&
+      d.stripeCheckout &&
+      !d.stripeCheckout.terminalStatus,
+  );
+}
+
+export function recordSandboxCheckoutClosure(service, donationId, terminalStatus) {
+  const d = checkoutRecord(service, donationId);
+  if (!['complete', 'expired'].includes(terminalStatus))
+    throw new AppError('Stripe still has this checkout open.', 502);
+  d.stripeCheckout.terminalStatus = terminalStatus;
+  if (terminalStatus !== 'expired' || d.status !== 'pending') return;
+  const before = service.auditSnapshot(d);
+  d.status = 'rejected';
+  const campaign = service.campaign(d.orgId, d.campaignId);
+  service.audit(
+    campaign,
+    d,
+    'stripe-sandbox-expired',
+    'stripe-sandbox',
+    before,
+    'Stripe confirmed that this unpaid checkout expired.',
   );
 }
 

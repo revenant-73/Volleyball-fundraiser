@@ -65,6 +65,24 @@ export function createStripeSandboxClient({ key, webhookSecret, origin }) {
         throw new AppError('Stripe did not return an eligible sandbox Checkout Session.', 502);
       return { id: session.id, url: session.url, expiresAt: session.expires_at };
     },
+    async expireCheckout(id) {
+      if (!id.startsWith('cs_test_'))
+        throw new AppError('Only a Stripe test checkout can be expired here.', 400);
+      let session = await stripe.checkout.sessions.retrieve(id);
+      if (session.livemode !== false || session.id !== id)
+        throw new AppError('This checkout is outside the Stripe sandbox.', 409);
+      if (session.status === 'open') {
+        try {
+          session = await stripe.checkout.sessions.expire(id);
+        } catch {
+          // A payer can complete Checkout between the read and expiration request.
+          session = await stripe.checkout.sessions.retrieve(id);
+        }
+      }
+      if (session.livemode !== false || session.id !== id)
+        throw new AppError('This checkout is outside the Stripe sandbox.', 409);
+      return session.status;
+    },
     verifyWebhook(raw, signature) {
       let event;
       try {

@@ -7,7 +7,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const sandbox = process.env.RALLYFUND_MODE === STRIPE_SANDBOX;
 const directory = path.resolve(
   root,
-  sandbox ? '.local/stripe-sandbox' : process.env.PROTOTYPE_DATA_DIR || '.local',
+  sandbox ? '.local/stripe-invite-rehearsal' : process.env.PROTOTYPE_DATA_DIR || '.local',
 );
 if (!directory.startsWith(root))
   throw new Error('Prototype data must remain inside the project folder.');

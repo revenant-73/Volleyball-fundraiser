@@ -1,6 +1,6 @@
 # Stripe sandbox rehearsal
 
-This is an isolated local mode. It binds to loopback, uses its own snapshot in `.local/stripe-sandbox`, and seeds one fictional TVVC player with a $1,000 season account. The normal review and hosted TVVC pilot keep their current service gates. Use test cards and fictional donor details only.
+This is an isolated local mode. It binds to loopback and seeds one draft TVVC campaign with one fictional player and a $1,000 season account. The invite-only rehearsal uses `.local/stripe-invite-rehearsal`. Earlier checkout rehearsals remain in `.local/stripe-sandbox`. Use test cards and fictional donor details only.
 
 ## Run the rehearsal
 
@@ -20,16 +20,18 @@ RALLYFUND_STRIPE_TEST_KEY=
 RALLYFUND_STRIPE_WEBHOOK_SECRET=
 ```
 
-1. Run `npm run dev:stripe-sandbox` and open http://127.0.0.1:5175. Open the fictional TVVC campaign and then the player link. Use a fictional email at `example.com` or `example.test` and submit a test contribution through Stripe Checkout.
-2. On return, refresh the payment status if Stripe has yet to deliver the event. The local receipt and campaign totals reflect the verified notification. A return page cannot confirm a contribution.
-3. Sign in with the local demo TVVC account and open **Dues**. Wait for the original charge's actual balance transaction fee. Until then, the verified gross is visible but no credit can be posted. Apply the available net amount with a fictional external posting reference.
-4. Issue a partial refund in the same Stripe sandbox. Once Stripe reports the refund succeeded, inspect **Dues**. The original contribution and processing fee remain in the audit history. Net funds and posted credit fall where necessary, and any required external reversal remains open for administrator reconciliation.
-5. Repeat the same signed event, or run `npm test` for the automated replay and restart checks. An event ID, Checkout request ID and dues posting request ID each have separate durable replay records. Distinct events for the same refund reconcile against the cumulative successful refund total, so there is only one financial effect.
+1. Run `npm run dev:stripe-sandbox` and sign in with the local demo TVVC coach account at http://127.0.0.1:5175/admin. Under **Athletes**, expand the fictional player and choose **Issue private setup link**. Open it in a separate session. The setup form accepts the public profile and guardian acknowledgement. The API rejects donor contact uploads.
+2. Save and complete setup. Record the fictional guardian authorization and approve the profile as the coach. On the setup page, choose **Check approval status** to reveal the donation link. The dashboard's **Open test donations** control requires approval. The campaign is unlisted. Donors use the link the player shares.
+3. From the shared link, use a fictional email at `example.com` or `example.test` and submit a test contribution through Stripe Checkout. On return, refresh the receipt if Stripe has yet to deliver the signed event. In **Dues**, wait for the original charge's fee and record the available net credit with a fictional posting reference.
+4. Issue a partial refund in the same Stripe sandbox and confirm that the credit and required reversal adjust. Repeat the payment and refund notifications to check that they have no additional effect.
+5. Leave a second Stripe Checkout open and press **Stop test donations** on the coach dashboard. The app records the stop before it contacts Stripe, blocks fresh requests and retries, and expires open Checkout Sessions. Stripe sessions already completed can still confirm or reconcile through signed events. If Stripe cannot confirm closure of some sessions, the dashboard provides a retry. The stop survives a restart and is final for the campaign.
 
-The Stripe SDK verifies the raw webhook signature. The server matches Checkout Session, payment intent, charge, USD amount and fictional player attribution. The original processing fee comes from the charge's balance transaction. Pending or failed refunds do not decrease credit. Unpaid or abandoned Checkout Sessions stay pending in this rehearsal. TVVC billing, fundraising email and public production campaigns remain gated.
+The Stripe SDK verifies the raw webhook signature. The server matches Checkout Session, payment intent, charge, USD amount and fictional player attribution. The original processing fee comes from the charge's balance transaction. Pending or failed refunds do not decrease credit. Natural abandonment remains pending unless the coach stops donations and Stripe confirms expiration. TVVC billing, fundraising email and public production campaigns remain gated.
 
 ## Verified on November 24, 2026
 
 Stripe-hosted Checkout accepted a $100 test card contribution from the fictional player's link. The Stripe CLI forwarded the signed payment event, and RallyFund read a $3.20 fee from the original charge. An administrator posted $96.80 to the fictional dues account. Stripe then reported a successful $25 partial refund. The applied credit fell to $71.80 and RallyFund recorded one $25 reversal awaiting external reconciliation.
 
 Replaying the genuine payment and refund events twice each did not add ledger entries or change credits. The automated regression also checks invalid signatures, live-event rejection, delayed fees, duplicate notifications racing each other, stale refund totals and replay after a server restart.
+
+The invite-only rehearsal passed from coach link issuance through approval and sharing into a separate iPhone-sized WebKit browser. Stripe confirmed one test card payment. The stop control expired a second, still-open Stripe Checkout Session, blocked new and repeated checkout requests, and preserved the confirmed payment. The regression also checks a checkout being created concurrently with the stop and a failed expiration retried after restarting.
