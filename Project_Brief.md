@@ -60,7 +60,7 @@ One mobile-friendly setup flow:
 
 Twenty email addresses is a recommendation, not a requirement or limit. Allow pasting multiple addresses, validate them, and identify duplicates.
 
-Save progress so interrupted setup can resume. After completion, show the athlete’s public fundraising link and sharing controls. Athletes can return through their secure link to add more contacts.
+Save progress so interrupted setup can resume. After the coach approves the completed public profile, show the athlete’s public fundraising link and sharing controls. Athletes can return through their secure link to add more contacts.
 
 Provide authorized families with a private season summary showing their target, confirmed gross contributions, actual fees, credit awaiting reconciliation, applied dues credits, pending payments, unapplied excess and remaining dues with an as-of date. Verify guardian/account access independently; possession of an athlete setup link alone must not expose family financial records. Public progress must not reveal invoices, payment plans or the family's remaining dues.
 

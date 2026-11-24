@@ -128,11 +128,14 @@ try {
   );
   await page.getByRole('button', { name: 'Done →', exact: true }).click();
   const publicPath = `/c/${campaign.slug}/a/${first.athlete.id}`;
+  await expect(page.getByRole('heading', { name: 'Waiting for coach approval' })).toBeVisible();
+  await expect(page.getByLabel('Public fundraising URL')).toHaveCount(0);
+  await approve(first);
+  await page.getByRole('button', { name: 'Check approval status' }).click();
   await expect(page.getByLabel('Public fundraising URL')).toHaveValue(base + publicPath);
   assert.equal((await detail()).jobs.length, 0);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
   await page.screenshot({ path: 'artifacts/hosted-review/athlete-mobile.png', fullPage: true });
-  await approve(first);
   await api(`/api/athlete/${second.privatePath.split('/').at(-1)}`, 'PATCH', {
     emails: `${sharedEmail}; ${secondEmail}`,
     message: 'Fictional team message.',
