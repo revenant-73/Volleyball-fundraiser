@@ -14,6 +14,8 @@ Objects use new-only writes and strong reads. A backup is downloaded, decrypted 
 
 There is **no automatic deletion** in this milestone. Files remain until an approved retention/deletion policy is implemented; hiding media does not erase historical backups. Storage and function usage may consume existing Netlify account credits. No plan upgrade was performed.
 
+Proposed periods, deletion-request handling and restore safeguards are in [Retention and Deletion Policy](Retention_Deletion_Policy.md). These defaults are for owner review only; no cleanup is approved or enabled.
+
 ## Recovery key
 
 The production key is configured as the function-only, production-context secret `RALLYFUND_STORAGE_KEY`. A private recovery copy is saved at:
@@ -22,7 +24,7 @@ The production key is configured as the function-only, production-context secret
 
 **Keep a secure offline copy of that file and an encrypted recovery download.** Do not commit it, send it through chat/email or store it beside a publicly shared recovery file. Losing both the hosted and recovery copies makes the encrypted data unrecoverable. The key is never returned by an application API. `configure-pilot-storage.mjs` refuses to replace a previously saved key with a different key. Key rotation needs an explicit re-encryption/key-preservation plan; changing the environment value alone is not a safe rotation.
 
-The database token still expires on **2026-11-15**. Rotate that existing database-scoped token and update local/hosted configuration before expiration so scheduled backups can continue. The recovery encryption key itself has no automatic expiry.
+The pilot's database-only token was renewed on **2026-11-24** and expires on **2026-12-24 at 7:46 a.m. Pacific**. Verify the database identity with the replacement before updating the local and pilot Netlify credentials. Publish the pilot and confirm the hosted API and backup operations after renewal. The recovery encryption key itself has no automatic expiry.
 
 ## Private image library
 

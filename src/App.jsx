@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { PilotMedia, PilotOperations } from './PilotStorage.jsx';
+import { DuesWorkspace, FamilyDuesSummary } from './Dues.jsx';
 
 const money = (value) =>
   new Intl.NumberFormat('en-US', {
@@ -750,7 +751,10 @@ function PublicPage({ slug, athleteId }) {
             “{a.message}”<cite>— {a.displayName}</cite>
           </blockquote>
         )}
-        <Progress total={data.totals.grossCents} goal={c.goalCents} />
+        <Progress
+          total={a ? a.totalCents : data.totals.grossCents}
+          goal={a?.targetCents ?? c.goalCents}
+        />
         <div className="public-meta">
           <span>{data.totals.donationCount} confirmed donations</span>
           <span>
@@ -758,7 +762,7 @@ function PublicPage({ slug, athleteId }) {
           </span>
           {a && (
             <span>
-              {money(a.totalCents)} credited to {a.displayName}
+              {money(a.totalCents)} confirmed gross raised for {a.displayName}
             </span>
           )}
         </div>
@@ -766,8 +770,23 @@ function PublicPage({ slug, athleteId }) {
       <div className="public-body">
         <section className="donate-panel">
           <div className="eyebrow">Every contribution counts</div>
-          <h2>Give the team a lift.</h2>
-          <p>All funds go to {c.organizationName}. Athlete credit celebrates their fundraising.</p>
+          <h2>
+            {a?.targetCents !== undefined ? 'Help cover season dues.' : 'Give the team a lift.'}
+          </h2>
+          <p>
+            All funds go to {c.organizationName}.{' '}
+            {a?.targetCents !== undefined
+              ? 'Confirmed contributions, less actual processing fees, can be applied toward this player’s season dues. Gross raised is separate from dues credit.'
+              : 'Choose a player or support the general campaign.'}
+          </p>
+          {data.athletes.some((player) => player.targetCents !== undefined) && (
+            <Notice>
+              Family dues policy · rehearsal v1: excess defaults to a donor refund unless the donor
+              agrees to general club support. If a family withdraws, funds cover only obligations
+              remaining under the season agreement; unused funds return to donors. No cash payout to
+              families. No actual payment or email is sent.
+            </Notice>
+          )}
           {!active && (
             <Notice>
               {c.status === 'draft'
@@ -798,6 +817,15 @@ function PublicPage({ slug, athleteId }) {
                 <strong>{money(receipt.donation.amountCents)}</strong> ·{' '}
                 {methodNames[receipt.donation.method]}
               </p>
+              {receipt.donation.refundedCents > 0 && (
+                <p>
+                  Refunded / lost dispute: {money(receipt.donation.refundedCents)}. The original
+                  amount above is retained for reference.
+                </p>
+              )}
+              {receipt.donation.disputeCents > 0 && (
+                <Notice>Under dispute review: {money(receipt.donation.disputeCents)}.</Notice>
+              )}
               <Field label="Unique donation reference">
                 <input readOnly value={receipt.donation.reference} />
               </Field>
@@ -923,11 +951,12 @@ function PublicPage({ slug, athleteId }) {
                   value={form.athleteId}
                   onChange={(e) => setForm({ ...form, athleteId: e.target.value })}
                 >
-                  <option value="">Overall campaign</option>
+                  <option value="">General campaign support</option>
                   {data.athletes.map((athlete) => (
-                    <option key={athlete.id} value={athlete.id}>
+                    <option key={athlete.id} value={athlete.id} disabled={!athlete.fundraisingOpen}>
                       {athlete.displayName}
                       {data.associations.includes(athlete.id) ? ' · invited you' : ''}
+                      {!athlete.fundraisingOpen ? ' · fundraising stopped' : ''}
                     </option>
                   ))}
                 </select>
@@ -956,7 +985,15 @@ function PublicPage({ slug, athleteId }) {
                 </>
               )}
               <Notice kind="error">{failure}</Notice>
-              <button disabled={busy || !active || !form.method}>
+              <button
+                disabled={
+                  busy ||
+                  !active ||
+                  !form.method ||
+                  (form.athleteId &&
+                    !data.athletes.find((player) => player.id === form.athleteId)?.fundraisingOpen)
+                }
+              >
                 {busy
                   ? 'Processing…'
                   : form.method === 'stripe'
@@ -1097,7 +1134,7 @@ function Unsubscribe({ token }) {
   );
 }
 
-const adminTabs = ['Dashboard', 'Athletes', 'Donations', 'Campaign Settings'];
+const adminTabs = ['Dashboard', 'Athletes', 'Donations', 'Dues', 'Campaign Settings'];
 function AdminAccount({ administrator, onSignedOut }) {
   const { data, error, refresh } = useResource(
     administrator.role === 'owner' ? '/api/admin/accounts' : null,
@@ -1306,6 +1343,7 @@ function Admin() {
           {(data.mode === 'pilot'
             ? [
                 'Dashboard',
+                'Dues',
                 'Campaign Settings',
                 'Media',
                 ...(data.administrator.role === 'owner' ? ['Operations'] : []),
@@ -1422,6 +1460,31 @@ function Admin() {
           />
         )}
         {tab === 'Media' && <PilotMedia api={api} Field={Field} Notice={Notice} />}
+        {tab === 'Dues' && data.organization.id === 'tvvc' && (
+          <DuesWorkspace
+            key={campaign?.id || 'none'}
+            campaign={campaign}
+            base={base}
+            busy={busy}
+            mutate={mutate}
+            Field={Field}
+            Notice={Notice}
+            pilot={data.mode === 'pilot'}
+            owner={data.mode !== 'pilot' || data.administrator.role === 'owner'}
+            onRehearsal={async () => {
+              const result = await mutate(
+                '/api/admin/dues-rehearsal',
+                'POST',
+                { requestId: crypto.randomUUID() },
+                'Fictional dues rehearsal created.',
+              );
+              if (result) setSelected(result.campaignId);
+            }}
+          />
+        )}
+        {tab === 'Dues' && data.organization.id !== 'tvvc' && (
+          <Notice>Family dues credits require separate school approval for Century.</Notice>
+        )}
         {tab === 'Operations' && data.administrator.role === 'owner' && (
           <PilotOperations api={api} Field={Field} Notice={Notice} />
         )}
@@ -1463,7 +1526,7 @@ function Admin() {
             }}
           />
         )}
-        {['Account', 'Media', 'Operations'].includes(tab) ? null : campaign ? (
+        {['Account', 'Media', 'Operations', 'Dues'].includes(tab) ? null : campaign ? (
           <>
             {tab === 'Dashboard' && (
               <Overview campaign={campaign} busy={busy} action={action} navigate={navigate} />
@@ -2186,6 +2249,10 @@ function Ledger({ campaign: c, mutate, base, busy, error, destination }) {
                 <td data-label="Amount">
                   <strong>{money(d.amountCents)}</strong>
                   <small>Fee: {d.feeCents === null ? 'Unknown' : money(d.feeCents)}</small>
+                  {d.refundedCents > 0 && (
+                    <small>Refunded / lost dispute: {money(d.refundedCents)}</small>
+                  )}
+                  {d.disputeCents > 0 && <small>Disputed: {money(d.disputeCents)}</small>}
                 </td>
                 <td data-label="Method">{methodNames[d.method]}</td>
                 <td data-label="Status">
@@ -3158,6 +3225,8 @@ export default function App() {
   let content;
   const parts = path.split('/').filter(Boolean);
   if (parts[0] === 'admin') content = <Admin />;
+  else if (parts[0] === 'family' && parts[1])
+    content = <FamilyDuesSummary key={parts[1]} token={parts[1]} api={api} Notice={Notice} />;
   else if (parts[0] === 'join' && parts[1]) content = <Athlete key={parts[1]} token={parts[1]} />;
   else if (parts[0] === 'c' && parts[1])
     content = (

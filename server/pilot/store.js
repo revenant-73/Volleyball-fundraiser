@@ -176,6 +176,15 @@ async function savePilot(tx, before, after, initializing = false) {
       throw new Error('Core record deletion requires a dedicated retention workflow.');
     for (const row of after.state[key]) {
       if (!initializing && isDeepStrictEqual(old.get(row.id), row)) continue;
+      if (key === 'athletes' && old.get(row.id)?.dues) {
+        const previous = old.get(row.id).dues;
+        if (
+          !row.dues ||
+          row.dues.season !== previous.season ||
+          !isDeepStrictEqual(previous.entries, row.dues.entries.slice(0, previous.entries.length))
+        )
+          throw new Error('Dues history is append-only; use an audited reversal.');
+      }
       const data = { ...row };
       delete data.id;
       fields.forEach(({ key }) => delete data[key]);

@@ -3025,3 +3025,38 @@ select:disabled {
     padding-bottom: 16px;
   }
 }
+/* Family account balances stay readable on narrow screens. */
+.dues-workspace {
+  display: grid;
+  gap: 1rem;
+}
+.dues-account {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.dues-account form {
+  display: grid;
+  gap: 1rem;
+  margin-block: 1.5rem;
+}
+.dues-balances {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  gap: 1rem;
+}
+.dues-balances > div {
+  padding: 0.75rem;
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+}
+.dues-balances dt {
+  font-size: 0.85rem;
+}
+.dues-balances dd {
+  margin: 0.35rem 0 0;
+  font-weight: 700;
+  font-size: 1.15rem;
+}
+.dues-account select {
+  max-width: 100%;
+}

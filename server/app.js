@@ -12,6 +12,7 @@ import {
 import { publicMedia } from './pilot/media.js';
 import { snapshotBackup } from './pilot/backup.js';
 import { writeSnapshot } from './store.js';
+import { changeDues, createDuesRehearsal, duesExport, familySummary } from './dues.js';
 import {
   Fundraiser,
   createSeed,
@@ -128,6 +129,7 @@ export function createApp({
         });
       if (
         !['/runtime', '/examples', '/login', '/logout', '/session'].includes(endpoint) &&
+        !(req.method === 'GET' && /^\/family\/[a-z0-9_-]+$/i.test(endpoint)) &&
         !endpoint.startsWith('/admin')
       )
         return disabled();
@@ -417,6 +419,52 @@ export function createApp({
       if (pilot) for (const method of Object.values(c.paymentSettings)) method.enabled = false;
       return service.detail(c.orgId, c.id, links);
     }),
+  );
+  const duesOwner = (req) => {
+    if (pilot && req.session.role !== 'owner')
+      throw new AppError('Organization owner access required for dues rehearsal.', 403);
+  };
+  app.post(
+    '/api/admin/dues-rehearsal',
+    route((req) => {
+      duesOwner(req);
+      return createDuesRehearsal(service, req.session.orgId, req.body, req.session.userId, pilot);
+    }),
+  );
+  app.post(
+    '/api/admin/campaigns/:id/dues/:athleteId',
+    route((req) => {
+      duesOwner(req);
+      const c = service.campaign(req.session.orgId, req.params.id);
+      if (pilot && !c.duesRehearsal)
+        throw new AppError(
+          'Pilot dues actions require a generated fictional rehearsal campaign.',
+          403,
+        );
+      return changeDues(
+        service,
+        req.session.orgId,
+        c.id,
+        req.params.athleteId,
+        req.body,
+        req.session.userId,
+      );
+    }),
+  );
+  app.get(
+    '/api/admin/campaigns/:id/dues-export',
+    route((req, res) => {
+      duesOwner(req);
+      const c = service.campaign(req.session.orgId, req.params.id);
+      res
+        .type('text/csv')
+        .attachment(`${c.slug}-dues.csv`)
+        .send(duesExport(service, req.session.orgId, c.id));
+    }),
+  );
+  app.get(
+    '/api/family/:token',
+    route((req) => familySummary(service, req.params.token)),
   );
   app.patch(
     '/api/admin/campaigns/:id',

@@ -2,6 +2,8 @@
 
 Build a mobile-friendly fundraising application for Century High School volleyball and Tualatin Valley Volleyball Club (TVVC).
 
+The primary purpose for the coming TVVC Girls Club season is to help individual players and families raise money toward their season dues. Participation is optional. Club-wide and team-wide campaigns organize and summarize those individual efforts; the family's season costs are the primary fundraising outcome. Century requires its own school-approved allocation rules rather than automatically inheriting TVVC's policy.
+
 The goal is to reproduce the useful parts of Snap! Raise: athletes provide donor contacts once, and the platform manages fundraising pages, invitations, reminders, and donation tracking. Charge no platform percentage. Payment processing, hosting, and email delivery still have costs.
 
 ## FIRST MILESTONE
@@ -25,6 +27,26 @@ Administrators configure campaign name, purpose, fundraising goal, start/end dat
 
 Default campaign length: 21 days.
 
+Each participating player has a season-specific family dues account and an administrator-approved fundraising target based on eligible outstanding season dues. Keep the public fundraising target separate from the private dues balance. Team/club totals roll up contributions without counting a contribution again when its dues credit is applied. General club support must be an explicit donor choice with a stated purpose; do not silently spread player-directed contributions across teammates.
+
+## PROPOSED TVVC DUES-CREDIT DEFAULTS
+
+The owner approved these defaults on 2026-10-17 for implementation and rehearsal with fictional data. The heading remains stable for existing document links. The implemented simulation is described in [Family Dues Workflow](docs/Family_Dues_Workflow.md). This approval does not authorize real collection, billing changes or live services. Confirm the policy against TVVC's season agreement, accounting process and payment-provider requirements before live use. Keep all existing live-service gates in place.
+
+| Topic | Recommended default |
+| --- | --- |
+| Dues credits | Attribute a contribution to one selected player/season, with money received by TVVC. Make credit eligible only after receipt is confirmed and actual processing fees are known. Apply credit up to the account's current eligible outstanding dues, through an administrator-reviewed, auditable posting. Pending, rejected, refunded or disputed funds cannot provide new spendable credit. |
+| Processing fees | Credit the confirmed amount less actual transaction processing fees. No platform percentage or automatic hosting/email deduction. Unknown fees remain unknown and the affected credit stays awaiting fee reconciliation; do not use estimated fees as final charges. Record verified zero fees explicitly. Start without an added donor fee or automatic fee gross-up. |
+| Excess funds | Stop new player-directed contributions and future solicitation for that player when the reconciled target is covered. For overages caused by concurrent payments or a reduced dues balance, hold the excess unapplied and default to refunding that portion to the original donor. An owner may instead record the donor's affirmative agreement to redirect it to stated general club support. No automatic redistribution, next-season carryover, or family cash payout. |
+| Family withdrawal or season cancellation | Stop the player's fundraising and new credit postings promptly. Reconcile confirmed funds against only the eligible dues still owed under the approved season/withdrawal agreement. Retain/reapply credits only to that obligation; reverse credits exceeding it and return unused contributions to their original donors. No automatic forfeiture to the club or payment to the family. Unresolved cases stay on hold for owner review. |
+| Refunds and disputes | Link every refund, dispute hold and credit reversal to the original contribution and dues posting. Freeze the affected available credit during a dispute; reverse affected credit for a completed refund or lost dispute, and release a hold only on verified resolution. Any restored family balance follows the season agreement and owner review, not an automatic new charge. TVVC absorbs non-returned processor/refund costs by default rather than silently reducing a promised donor refund or adding a new family fee. |
+
+For example, a fictional confirmed $100 contribution with an actual $3 processing fee makes $97 eligible for dues credit. A pending $100 payment makes $0 eligible. If fees are unknown, show the confirmed $100 gross separately with credit awaiting reconciliation. If only $60 of eligible dues remains, apply no more than $60 and hold the remainder for the excess-funds process; refund costs must be reconciled separately.
+
+The initial live workflow may use an administrator-reviewed export and manual posting to TVVC's dues system. Record the external posting reference and reconcile it before marking credit applied. Do not imply a live connection to the separate TVVC website, edit that site, or automatically change installment charges in this project.
+
+Store donation attribution, eligible credit, applied credit, reversals and excess disposition separately. Use integer cents and durable idempotency so retries, repeated imports, webhooks or concurrent administrators cannot post the same credit twice. Preserve the original attribution and append corrections; moving fundraising credit after application requires coordinated dues reversal/reposting. Family payments and fundraising credits must reconcile to the same season balance without double counting.
+
 ## ATHLETE EXPERIENCE
 
 Athletes receive a unique, secure invitation link. No password or account creation.
@@ -40,6 +62,8 @@ Twenty email addresses is a recommendation, not a requirement or limit. Allow pa
 
 Save progress so interrupted setup can resume. After completion, show the athlete’s public fundraising link and sharing controls. Athletes can return through their secure link to add more contacts.
 
+Provide authorized families with a private season summary showing their target, confirmed gross contributions, actual fees, credit awaiting reconciliation, applied dues credits, pending payments, unapplied excess and remaining dues with an as-of date. Verify guardian/account access independently; possession of an athlete setup link alone must not expose family financial records. Public progress must not reveal invoices, payment plans or the family's remaining dues.
+
 Keep private setup links separate from public donation links. Private links must be revocable and protected against guessing. Administrator access requires authentication.
 
 Separate athlete preparation from campaign launch. Completing setup must not send donor invitations before launch. After launch, newly completed athletes and newly added contacts can enter the remaining email sequence without receiving a backlog of missed reminders.
@@ -48,7 +72,9 @@ Separate athlete preparation from campaign launch. Completing setup must not sen
 
 Public athlete pages show organization branding, campaign purpose, athlete photo and personal message, confirmed fundraising progress, deadline, and enabled payment methods.
 
-Allow donations to the overall campaign as well as through an athlete page. Athlete attribution is fundraising credit; money goes to the organization.
+Allow contributions toward a selected player's season dues as well as an explicitly labeled general campaign purpose. Money goes to the organization. Player attribution identifies the intended dues beneficiary; a separate reconciled dues-credit record establishes what has actually been applied to the family's account.
+
+Before payment, explain the recipient, selected player/season, processing-fee treatment, excess-funds and withdrawal/refund rules. Use wording such as “Help cover this player's TVVC season dues.” Do not imply funds are paid directly to the family or promise full-dollar dues credit when processing fees are deducted. Label confirmed gross fundraising progress distinctly from net dues credit; unconfirmed payments must not advance either confirmed measure.
 
 Payment behavior:
 
@@ -97,6 +123,8 @@ Provide:
 * Invitation status and onboarding completion.
 * Confirmed gross donations, known fees, known net proceeds, donation count, and progress.
 * Athlete/team fundraising totals.
+* Private player/season dues accounts, eligible charges, family payments, approved targets, reconciled credit postings/reversals, unapplied excess and remaining balances.
+* Owner-reviewed excess-funds and withdrawal cases, donor refund/redirection evidence, and dues export/posting reconciliation.
 * Pending external payments and manual reconciliation.
 * Email delivery, suppression, failures, and upcoming messages.
 * CSV export of the donation ledger.
@@ -133,6 +161,8 @@ Demonstrate that:
 * Sharing links and QR codes resolve to the correct public page.
 
 Test the state transitions and duplicate-processing behavior, not just the screen rendering.
+
+Before family-focused live launch, also demonstrate that confirmed contributions and dues credits remain distinct; unknown fees block final credit; duplicate/concurrent postings cannot over-credit a balance; family payments reduce available dues before credit is applied; target completion stops new player-directed fundraising without blocking other players; excess and withdrawal cases preserve donor intent; partial refunds and disputes adjust credit once; and unauthorized users cannot read family balances. These are additional acceptance checks, not claims about the existing milestone-one implementation. Shared contacts must retain one campaign email sequence and existing pending-payment holds when one associated player stops fundraising.
 
 ## DELIVERABLES
 

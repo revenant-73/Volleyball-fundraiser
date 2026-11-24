@@ -395,8 +395,8 @@ test('390px dashboard shortcuts filter athlete tasks; approval and collapsed CSV
   await addAthlete(page.request, c, 'Incomplete');
   await openAdminCampaign(page, c);
   const nav = page.getByRole('navigation', { name: 'Administrator sections' });
-  await expect(nav.getByRole('button')).toHaveCount(4);
-  for (const name of ['Dashboard', 'Athletes', 'Donations', 'Campaign Settings'])
+  await expect(nav.getByRole('button')).toHaveCount(5);
+  for (const name of ['Dashboard', 'Athletes', 'Donations', 'Dues', 'Campaign Settings'])
     await expect(nav.getByRole('button', { name, exact: true })).toBeVisible();
   await page.getByRole('button', { name: /^Review athlete stories/ }).click();
   await expect(page.locator('.athlete-detail')).toHaveCount(1);

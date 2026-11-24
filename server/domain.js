@@ -6,6 +6,7 @@ import {
   timingSafeEqual,
   scryptSync,
 } from 'node:crypto';
+import { duesSummary, fundraisingOpen, synchronizeDues } from './dues.js';
 
 export class AppError extends Error {
   constructor(message, status = 400) {
@@ -552,7 +553,7 @@ export class Fundraiser {
   eligible(contact) {
     return contact.athleteIds
       .map((aid) => this.findAthlete(contact.campaignId, aid))
-      .filter((a) => a.completed && a.approved);
+      .filter((a) => a.completed && a.approved && fundraisingOpen(this, a));
   }
   contactState(contact) {
     if (this.state.suppressions.some((s) => s.orgId === contact.orgId && s.email === contact.email))
@@ -803,6 +804,8 @@ export class Fundraiser {
       const email = normalizedEmail(input.email);
       if (!validEmail(email)) fail('Enter a valid donor email.');
       if (input.athleteId) this.findAthlete(c.id, input.athleteId);
+      if (input.athleteId && !fundraisingOpen(this, this.findAthlete(c.id, input.athleteId)))
+        fail('This player is no longer accepting contributions toward season dues.', 409);
       const transaction = text(input.transaction || input.donorReference, 200);
       if (transaction) this.uniqueTransaction(c.orgId, input.method, transaction);
       const reported = input.method === 'stripe' || !input.intent;
@@ -825,6 +828,9 @@ export class Fundraiser {
         receiptHash: hash(raw),
         createdAt: c.now,
         everConfirmed: false,
+        ...(input.athleteId && this.findAthlete(c.id, input.athleteId).dues
+          ? { duesPolicyVersion: 'family-dues-rehearsal-v1' }
+          : {}),
       };
       this.state.ledger.push(d);
       this.donationContact(c, email);
@@ -842,7 +848,16 @@ export class Fundraiser {
   }
   receiptDonation(d) {
     const { id, reference, status, amountCents, method, reported } = d;
-    return { id, reference, status, amountCents, method, reported };
+    return {
+      id,
+      reference,
+      status,
+      amountCents,
+      method,
+      reported,
+      refundedCents: d.refundedCents || 0,
+      disputeCents: d.disputeCents || 0,
+    };
   }
   receipt(raw) {
     const d =
@@ -964,6 +979,9 @@ export class Fundraiser {
       athleteId,
       receivedDate,
       transaction,
+      refundedCents: d.refundedCents || 0,
+      disputeCents: d.disputeCents || 0,
+      duesRedirectedCents: d.duesRedirectedCents || 0,
     };
   }
   audit(c, d, action, actor, before, note) {
@@ -981,6 +999,13 @@ export class Fundraiser {
     this.log(c, `ledger-${action}`, `${d.reference}: ${action} recorded in audit trail.`);
   }
   afterConfirmation(c, d) {
+    if (d.athleteId)
+      synchronizeDues(
+        this,
+        this.findAthlete(c.id, d.athleteId),
+        'payment-confirmation',
+        'Contribution confirmation reconciled.',
+      );
     const contact = this.donationContact(c, d.email);
     for (const j of this.state.jobs.filter(
       (j) =>
@@ -1012,6 +1037,18 @@ export class Fundraiser {
     return this.once(`ledger:${c.id}:${input.requestId}`, input, () => {
       if (!text(input.note)) fail('An audit note is required.');
       const before = this.auditSnapshot(d);
+      const duesAthlete = d.athleteId ? this.findAthlete(c.id, d.athleteId) : null;
+      if (d.duesRedirectedCents || d.disputeCents)
+        fail('Resolve this contribution in the Dues workspace first.', 409);
+      if (
+        input.athleteId !== undefined &&
+        (input.athleteId || null) !== d.athleteId &&
+        this.state.athletes.some((a) => a.dues?.entries.some((e) => e.donationId === d.id))
+      )
+        fail(
+          'A contribution with dues history cannot be reassigned. Review its dues postings first.',
+          409,
+        );
       if (['confirm', 'correct'].includes(input.action)) {
         if (
           (input.action === 'confirm' && d.status !== 'pending') ||
@@ -1029,6 +1066,10 @@ export class Fundraiser {
         )
           fail('Method and received date (not in the future) are required.');
         const amountCents = money(input.amount);
+        if (d.refundedCents && amountCents !== d.amountCents)
+          fail('Do not rewrite the original amount after a partial refund.');
+        if ((d.refundedCents || 0) > amountCents)
+          fail('Amount cannot be less than recorded refunds.');
         const feeCents =
           input.fee === '' || input.fee === undefined || input.fee === null
             ? null
@@ -1057,10 +1098,14 @@ export class Fundraiser {
       } else if (input.action === 'refund') {
         if (d.status !== 'confirmed') fail('Only a confirmed donation can be refunded.', 409);
         d.status = 'refunded';
+        d.refundedCents = d.amountCents;
       } else if (input.action === 'attribute') {
-        if (input.athleteId) this.findAthlete(c.id, input.athleteId);
+        const recipient = input.athleteId ? this.findAthlete(c.id, input.athleteId) : null;
         d.athleteId = input.athleteId || null;
+        if (recipient && recipient !== duesAthlete)
+          synchronizeDues(this, recipient, actor, text(input.note, 1000));
       } else fail('Unknown ledger action.');
+      if (duesAthlete) synchronizeDues(this, duesAthlete, actor, text(input.note, 1000));
       this.audit(c, d, input.action, actor, before, text(input.note, 1000));
       return this.auditSnapshot(d);
     });
@@ -1100,22 +1145,35 @@ export class Fundraiser {
     const ds = this.state.ledger.filter(
       (d) =>
         d.campaignId === campaignId &&
-        d.status === 'confirmed' &&
+        ['confirmed', 'refunded'].includes(d.status) &&
         (athleteId === undefined || d.athleteId === athleteId),
     );
     return {
-      grossCents: ds.reduce((sum, d) => sum + d.amountCents, 0),
+      grossCents: ds.reduce(
+        (sum, d) => sum + (d.status === 'refunded' ? 0 : d.amountCents - (d.refundedCents || 0)),
+        0,
+      ),
       knownFeeCents: ds.reduce((sum, d) => sum + (d.feeCents ?? 0), 0),
       knownNetCents: ds
         .filter((d) => d.feeCents !== null)
-        .reduce((sum, d) => sum + d.amountCents - d.feeCents, 0),
+        .reduce(
+          (sum, d) =>
+            sum +
+            (d.status === 'refunded' ? 0 : d.amountCents - (d.refundedCents || 0)) -
+            d.feeCents,
+          0,
+        ),
       unknownFeeCount: ds.filter((d) => d.feeCents === null).length,
-      donationCount: ds.length,
+      donationCount: ds.filter((d) => d.status === 'confirmed').length,
     };
   }
   adminAthlete(a) {
-    const { inviteHash, expiresAt, ...rest } = a;
-    return { ...rest, totalCents: this.totals(a.campaignId, a.id).grossCents };
+    const { inviteHash, expiresAt, dues, ...rest } = a;
+    return {
+      ...rest,
+      dues: duesSummary(this, a),
+      totalCents: this.totals(a.campaignId, a.id).grossCents,
+    };
   }
   detail(orgId, campaignId, links = {}) {
     const c = this.campaign(orgId, campaignId);
@@ -1183,6 +1241,8 @@ export class Fundraiser {
         photo: a.approved ? a.approvedProfile.photo : '',
         message: a.approved ? a.approvedProfile.message : '',
         totalCents: this.totals(c.id, a.id).grossCents,
+        fundraisingOpen: fundraisingOpen(this, a),
+        ...(a.dues ? { targetCents: a.dues.targetCents } : {}),
       }));
     const athlete = athleteId
       ? athletes.find((a) => a.id === athleteId) || fail('Athlete page not found.', 404)
@@ -1276,6 +1336,9 @@ export function ledgerCSV(rows) {
     'athleteId',
     'receivedDate',
     'transaction',
+    'refundedCents',
+    'disputeCents',
+    'duesRedirectedCents',
   ];
   const cell = (v) => {
     let s = String(v ?? '');

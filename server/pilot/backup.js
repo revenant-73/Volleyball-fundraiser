@@ -11,6 +11,7 @@ export function snapshotBackup(source) {
   const snapshot = structuredClone(source);
   // Restore must never resurrect an old authenticated session or lockout.
   snapshot.auth = { sessions: [], attempts: [] };
+  for (const a of snapshot.state.athletes) if (a.dues) a.dues.summaryHash = null;
   return {
     database: PILOT_ID,
     format: 1,

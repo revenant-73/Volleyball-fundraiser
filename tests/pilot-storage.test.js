@@ -206,7 +206,7 @@ test('encrypted backups include media, survive replay and recover both database 
       cipher: s.cipher,
     }),
   );
-  s.clock.value = new Date('2026-10-18T15:00:00Z');
+  s.clock.value = new Date(Date.parse(first.createdAt) + 37 * 60 * 60 * 1000);
   assert.equal((await s.backups.status()).stale, true);
 });
 

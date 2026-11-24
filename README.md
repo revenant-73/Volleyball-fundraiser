@@ -102,10 +102,16 @@ npm audit
 
 The browser suite uses Chromium with a real 390px browser viewport and desktop views. It decodes the downloaded QR graphic to check its exact public destination. It is not physical-phone or Safari validation. It can be rerun: campaigns created by it remain isolated under `.local-e2e` and contacts stay fictional.
 
+## Family season dues rehearsal
+
+Open **Dues → Create fictional dues rehearsal** in the TVVC review workspace or as a pilot owner. It creates a separate draft with Sample Riley and Sample Morgan, fictional season balances and confirmed/unknown-fee/pending sample contributions. Nothing is seeded into existing campaigns automatically. Record reconciled dues credits, family payments/corrections, simulated refunds/disputes, excess redirection consent and withdrawal obligations. Private family summaries use independent eight-hour revocable read-only links. No actual bills, payments or emails change. See [Family Dues Workflow](docs/Family_Dues_Workflow.md) for the walkthrough, storage boundaries and remaining live requirements.
+
 ## Remaining live-service work
 
 The separate TVVC production-foundation pilot now has a Turso relational schema and individual owner/admin access. It remains in preparation with public fundraising, payments and email blocked. The existing review environment is preserved. Setup, recovery, verification, deployment boundaries and remaining limitations are documented in [TVVC Pilot Foundation](docs/TVVC_Pilot_Foundation.md).
 
 The pilot also has encrypted daily cloud backups with private image recovery and an authenticated staged Media library. Owner-only Operations shows backup health and encrypted downloads. See [TVVC Pilot Storage](docs/TVVC_Pilot_Storage.md) for recovery-key custody, retention boundaries and verification. Public media publishing and real donor/athlete collection remain closed.
+
+[Proposed retention and deletion defaults](docs/Retention_Deletion_Policy.md) separate 30-day recovery backups, 90-day campaign personal data and a minimal financial archive. This is a draft for owner review; no deletion or automatic cleanup is authorized or enabled.
 
 Configure verified organization identities/branding, approved external payment destinations/instructions, live Stripe account/webhook, provider-approved contact permission and email delivery, authenticated production admin access, durable database/outbox/jobs, retention/deletion/backups, guardian authorization, and receipt wording. See the launch checklist for the gate. Live payment/email adapters do not exist in this milestone and cannot be enabled with a settings toggle.
