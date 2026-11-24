@@ -791,7 +791,7 @@ export class Fundraiser {
     this.state.requests[key] = { fingerprint, result: structuredClone(result) };
     return result;
   }
-  createDonation(slug, input) {
+  createDonation(slug, input, paymentProvider = null) {
     const c = this.publicCampaign(slug);
     return this.once(`donation:${c.id}:${input.requestId}`, input, () => {
       if (
@@ -828,6 +828,7 @@ export class Fundraiser {
         receiptHash: hash(raw),
         createdAt: c.now,
         everConfirmed: false,
+        ...(paymentProvider ? { paymentProvider, checkoutReservedAt: Date.now() } : {}),
         ...(input.athleteId && this.findAthlete(c.id, input.athleteId).dues
           ? { duesPolicyVersion: 'family-dues-rehearsal-v1' }
           : {}),
@@ -837,7 +838,7 @@ export class Fundraiser {
       this.log(
         c,
         reported ? 'payment-pending' : 'reference-created',
-        `${d.reference}: ${reported ? `payment ${input.method === 'stripe' ? 'simulation started' : 'reported'}, pending verification` : 'external payment reference reserved; no payment reported'}.`,
+        `${d.reference}: ${reported ? 'payment pending verification' : 'external payment reference reserved; no payment reported'}.`,
       );
       return {
         donation: this.receiptDonation(d),
@@ -857,6 +858,7 @@ export class Fundraiser {
       reported,
       refundedCents: d.refundedCents || 0,
       disputeCents: d.disputeCents || 0,
+      ...(d.paymentProvider ? { paymentProvider: d.paymentProvider } : {}),
     };
   }
   receipt(raw) {
@@ -895,7 +897,8 @@ export class Fundraiser {
     const d =
       this.state.ledger.find((x) => safeEqual(x.receiptHash, hash(raw))) ||
       fail('Receipt not found.', 404);
-    if (d.method !== 'stripe') fail('Only mock Stripe payments can be confirmed by the simulator.');
+    if (d.method !== 'stripe' || d.paymentProvider)
+      fail('Only mock Stripe payments can be confirmed by the simulator.');
     if (!/^[a-zA-Z0-9_-]{8,100}$/.test(eventId || ''))
       fail('A unique simulated event ID is required.');
     const event = {
@@ -918,6 +921,7 @@ export class Fundraiser {
     const c = this.campaign(d.orgId, d.campaignId);
     if (
       d.method !== 'stripe' ||
+      d.paymentProvider ||
       event.type !== 'mock.payment_confirmed' ||
       event.amountCents !== d.amountCents
     )
@@ -1034,6 +1038,8 @@ export class Fundraiser {
     const d =
       this.state.ledger.find((d) => d.id === donationId && d.campaignId === c.id) ||
       fail('Donation not found.', 404);
+    if (d.paymentProvider === 'stripe-sandbox')
+      fail('Stripe sandbox payments and refunds must be reconciled from Stripe.', 409);
     return this.once(`ledger:${c.id}:${input.requestId}`, input, () => {
       if (!text(input.note)) fail('An audit note is required.');
       const before = this.auditSnapshot(d);

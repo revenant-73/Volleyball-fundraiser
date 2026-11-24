@@ -14,6 +14,16 @@ import { snapshotBackup } from './pilot/backup.js';
 import { writeSnapshot } from './store.js';
 import { changeDues, createDuesRehearsal, duesExport, familySummary } from './dues.js';
 import {
+  STRIPE_SANDBOX,
+  attachCheckout,
+  checkoutRecord,
+  reconcileStripePayment,
+  reserveCheckout,
+  sandboxDonation,
+  stripeEventProcessed,
+  stripeEventRecord,
+} from './stripe-sandbox.js';
+import {
   Fundraiser,
   createSeed,
   AppError,
@@ -33,17 +43,23 @@ export function createApp({
   pilot = false,
   clientIp = null,
   pilotServices = null,
+  stripeSandbox = null,
 } = {}) {
   if (pilot && !seed) throw new Error('Pilot requires an initialized database.');
+  if (stripeSandbox && (hosted || pilot || seed?.mode !== STRIPE_SANDBOX))
+    throw new Error('Stripe sandbox requires its isolated local fixture.');
   let state;
   let links = {};
   let auth = seed?.auth;
   if (directory && existsSync(path.join(directory, 'snapshot.json'))) {
     const saved = JSON.parse(readFileSync(path.join(directory, 'snapshot.json'), 'utf8'));
+    if ((saved.mode === STRIPE_SANDBOX) !== Boolean(stripeSandbox))
+      throw new Error('Stripe sandbox and review snapshots must stay separate.');
     state = saved.state;
     links = saved.links;
     auth = saved.auth;
   } else if (directory && existsSync(path.join(directory, 'state.json'))) {
+    if (stripeSandbox) throw new Error('Stripe sandbox cannot load review data.');
     state = JSON.parse(readFileSync(path.join(directory, 'state.json'), 'utf8'));
     links = JSON.parse(readFileSync(path.join(directory, 'private-links.json'), 'utf8'));
   } else {
@@ -61,6 +77,7 @@ export function createApp({
     state: service.state,
     links,
     auth: { sessions: [...sessions], attempts: [...attempts] },
+    ...(stripeSandbox ? { mode: STRIPE_SANDBOX } : {}),
   });
   let lastWritten;
   const persist = () => {
@@ -87,7 +104,8 @@ export function createApp({
     });
     if (
       (pilot ? req.path.toLowerCase() : req.path).startsWith('/api') &&
-      !['GET', 'HEAD'].includes(req.method)
+      !['GET', 'HEAD'].includes(req.method) &&
+      !(stripeSandbox && req.method === 'POST' && req.path === '/api/stripe-sandbox/webhook')
     ) {
       if (req.get('X-Prototype') !== 'local')
         return res.status(403).json({ error: 'Prototype request header required.' });
@@ -111,6 +129,35 @@ export function createApp({
     }
     next();
   });
+  // Provider calls can complete out of order. Persist each local mutation synchronously
+  // so a failed network request cannot roll back another request's committed ledger.
+  const commitStripe = (fn) => {
+    const before = structuredClone(service.state);
+    try {
+      const result = fn();
+      persist();
+      return result;
+    } catch (error) {
+      service.state = before;
+      throw error;
+    }
+  };
+  if (stripeSandbox)
+    app.post(
+      '/api/stripe-sandbox/webhook',
+      express.raw({ type: 'application/json', limit: '1mb' }),
+      async (req, res) => {
+        const event = stripeSandbox.verifyWebhook(req.body, req.get('Stripe-Signature'));
+        const record = stripeEventRecord(event);
+        if (!stripeEventProcessed(service, record)) {
+          const payment = await stripeSandbox.paymentForEvent(event, (id) =>
+            sandboxDonation(service, id),
+          );
+          if (payment) commitStripe(() => reconcileStripePayment(service, record, payment));
+        }
+        res.json({ received: true });
+      },
+    );
   app.use(express.json({ limit: '3mb' }));
   if (pilot)
     app.use('/api', (req, res, next) => {
@@ -198,7 +245,7 @@ export function createApp({
     route(() =>
       pilot
         ? { hosted, simulation: false, mode: 'pilot', paymentsEnabled: false, emailEnabled: false }
-        : { hosted, simulation: true },
+        : { hosted, simulation: true, ...(stripeSandbox ? { mode: STRIPE_SANDBOX } : {}) },
     ),
   );
   app.get(
@@ -295,7 +342,9 @@ export function createApp({
               service.state.users.find((u) => u.id === req.session.userId),
             ),
           }
-        : {}),
+        : stripeSandbox
+          ? { mode: STRIPE_SANDBOX }
+          : {}),
       campaigns: service.state.campaigns
         .filter((c) => c.orgId === req.session.orgId)
         .map((c) => service.detail(c.orgId, c.id, links)),
@@ -592,12 +641,42 @@ export function createApp({
   );
   app.get(
     '/api/public/:slug',
-    route((req) => service.publicView(req.params.slug, req.query.athlete, req.query.contact)),
+    route((req) => ({
+      ...service.publicView(req.params.slug, req.query.athlete, req.query.contact),
+      ...(stripeSandbox ? { stripeSandbox: true } : {}),
+    })),
   );
-  app.post(
-    '/api/public/:slug/donations',
-    route((req) => service.createDonation(req.params.slug, req.body)),
-  );
+  if (stripeSandbox) {
+    app.post('/api/public/:slug/donations', async (req, res) => {
+      if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body))
+        throw new AppError('A JSON object is required.');
+      const result = commitStripe(() => reserveCheckout(service, req.params.slug, req.body));
+      let donation = checkoutRecord(service, result.donation.id);
+      if (donation.status === 'pending' && !donation.stripeCheckout) {
+        if (Date.now() - donation.checkoutReservedAt >= 25 * 60 * 1000)
+          throw new AppError('This checkout reservation expired. Start a new contribution.', 409);
+        let session;
+        try {
+          session = await stripeSandbox.createCheckout(donation, req.params.slug);
+        } catch {
+          throw new AppError('Stripe sandbox Checkout is unavailable. Please retry.', 502);
+        }
+        donation = commitStripe(() => attachCheckout(service, donation.id, session));
+      }
+      const checkout = donation.stripeCheckout;
+      if (donation.status === 'pending' && checkout.expiresAt * 1000 <= Date.now())
+        throw new AppError('This Checkout Session expired. Start a new contribution.', 409);
+      res.json({
+        donation: service.receiptDonation(donation),
+        receiptToken: result.receiptToken,
+        checkoutUrl: donation.status === 'pending' ? checkout.url : null,
+      });
+    });
+  } else
+    app.post(
+      '/api/public/:slug/donations',
+      route((req) => service.createDonation(req.params.slug, req.body)),
+    );
   app.post(
     '/api/simulator/payments',
     route((req) => ({ donation: service.simulatorEvent(req.body.receiptToken, req.body.eventId) })),
@@ -630,6 +709,11 @@ export function createApp({
         location: err.stack?.split('\n')[1]?.trim(),
       });
     }
+    const stripeError = stripeSandbox && err.type?.startsWith('Stripe');
+    if (stripeError)
+      return res
+        .status(502)
+        .json({ error: 'Stripe sandbox could not be reached. Retry the event.' });
     res
       .status(err.status || 500)
       .json({ error: err.status ? err.message : 'Unexpected local server error.' });

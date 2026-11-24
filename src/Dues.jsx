@@ -84,6 +84,7 @@ export function DuesWorkspace({
   Field,
   Notice,
   pilot,
+  stripeSandbox,
   owner,
 }) {
   const [selected, setSelected] = useState('');
@@ -92,13 +93,14 @@ export function DuesWorkspace({
   return (
     <section className="dues-workspace">
       <Notice>
-        Fictional dues rehearsal. Credits record manual posting evidence; they do not change TVVC
-        billing, move money, or send email. Refunds and dispute resolutions here are simulations.
+        {stripeSandbox
+          ? 'Stripe sandbox rehearsal. Use the same Stripe sandbox to issue test refunds. Record the resulting dues credit or reversal here using a fictional posting reference.'
+          : 'Fictional dues rehearsal. Credits record manual posting evidence; they do not change TVVC billing, move money, or send email. Refunds and dispute resolutions here are simulations.'}
       </Notice>
       <p>
         Help individual families cover season dues. Club and team totals summarize their efforts.
       </p>
-      {owner && (
+      {owner && !stripeSandbox && (
         <button className="secondary" disabled={busy} onClick={onRehearsal}>
           Create fictional dues rehearsal
         </button>
@@ -133,6 +135,7 @@ export function DuesWorkspace({
               Notice={Notice}
               owner={owner}
               rehearsal={campaign.duesRehearsal}
+              stripeSandbox={stripeSandbox}
             />
           )}
           {owner && (
@@ -153,7 +156,17 @@ export function DuesWorkspace({
   );
 }
 
-function DuesAccount({ athlete, base, busy, mutate, Field, Notice, owner, rehearsal }) {
+function DuesAccount({
+  athlete,
+  base,
+  busy,
+  mutate,
+  Field,
+  Notice,
+  owner,
+  rehearsal,
+  stripeSandbox,
+}) {
   const s = athlete.dues;
   const [form, setForm] = useState({
     action: 'post',
@@ -243,12 +256,16 @@ function DuesAccount({ athlete, base, busy, mutate, Field, Notice, owner, rehear
                   Reopen player fundraising after owner review
                 </option>
                 <option value="withdraw">Withdraw family / cancel season</option>
-                <option value="refund">Simulate donor refund</option>
-                <option value="redirect">Redirect excess with donor consent</option>
-                <option value="undo-redirect">Reverse redirection before donor refund</option>
-                <option value="dispute">Place dispute hold</option>
-                <option value="dispute-won">Resolve dispute won</option>
-                <option value="dispute-lost">Resolve dispute lost</option>
+                {!stripeSandbox && (
+                  <>
+                    <option value="refund">Simulate donor refund</option>
+                    <option value="redirect">Redirect excess with donor consent</option>
+                    <option value="undo-redirect">Reverse redirection before donor refund</option>
+                    <option value="dispute">Place dispute hold</option>
+                    <option value="dispute-won">Resolve dispute won</option>
+                    <option value="dispute-lost">Resolve dispute lost</option>
+                  </>
+                )}
                 <option value="reversal-posted">Reconcile external credit reversal</option>
                 <option value="family-link">Issue / replace private family summary link</option>
                 <option value="revoke-link">Revoke family summary link</option>

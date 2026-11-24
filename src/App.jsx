@@ -626,6 +626,7 @@ function PublicPage({ slug, athleteId }) {
       try {
         sessionStorage.setItem(`rally-receipt:${slug}`, result.receiptToken);
       } catch {}
+      if (result.checkoutUrl) window.location.assign(result.checkoutUrl);
     } catch (e) {
       setFailure(e.message);
     } finally {
@@ -695,6 +696,19 @@ function PublicPage({ slug, athleteId }) {
       setBusy(false);
     }
   }
+  async function refreshSandboxReceipt() {
+    setBusy(true);
+    setFailure('');
+    try {
+      const result = await api(`/api/receipt/${encodeURIComponent(receipt.receiptToken)}`);
+      setReceipt((previous) => ({ ...previous, ...result }));
+      await refresh();
+    } catch (error) {
+      setFailure(error.message);
+    } finally {
+      setBusy(false);
+    }
+  }
   if (error)
     return (
       <main className="narrow">
@@ -707,7 +721,10 @@ function PublicPage({ slug, athleteId }) {
     a = data.athlete,
     p = c.paymentSettings,
     enabled = Object.keys(methodNames).filter((k) => p[k]?.enabled),
-    active = c.status === 'active' || c.status === 'paused';
+    active = c.status === 'active' || c.status === 'paused',
+    sandbox = data.stripeSandbox === true;
+  const paymentName = (method) =>
+    sandbox && method === 'stripe' ? 'Card · Stripe sandbox' : methodNames[method];
   return (
     <main className="public-page" style={{ '--org-accent': c.color || '#5ce1bc' }}>
       <section className="public-hero court">
@@ -784,7 +801,10 @@ function PublicPage({ slug, athleteId }) {
               Family dues policy · rehearsal v1: excess defaults to a donor refund unless the donor
               agrees to general club support. If a family withdraws, funds cover only obligations
               remaining under the season agreement; unused funds return to donors. No cash payout to
-              families. No actual payment or email is sent.
+              families.{' '}
+              {sandbox
+                ? 'Use a Stripe test card and fictional details.'
+                : 'No actual payment or email is sent.'}
             </Notice>
           )}
           {!active && (
@@ -799,23 +819,27 @@ function PublicPage({ slug, athleteId }) {
           {receipt ? (
             <section className="receipt">
               <p className="receipt-wording">
-                This payment reference is saved only in this browser tab. You can return here to
-                report or review your simulated payment. Closing the tab removes the saved
-                reference.
+                {sandbox
+                  ? 'This tab keeps your test payment reference so you can check it after Stripe returns you here.'
+                  : 'This payment reference is saved in this tab. Return here to report or review your simulated payment.'}
               </p>
               <Status value={receipt.donation.status} />
               <h3>
                 {receipt.donation.status === 'confirmed'
-                  ? 'Your demo contribution is confirmed.'
-                  : receipt.donation.method === 'stripe'
-                    ? 'Simulated checkout ready.'
-                    : receipt.donation.reported
-                      ? 'Payment report received.'
-                      : 'Your payment reference is ready.'}
+                  ? sandbox
+                    ? 'Your Stripe test contribution is confirmed.'
+                    : 'Your demo contribution is confirmed.'
+                  : sandbox
+                    ? 'Stripe sandbox payment status'
+                    : receipt.donation.method === 'stripe'
+                      ? 'Simulated checkout ready.'
+                      : receipt.donation.reported
+                        ? 'Payment report received.'
+                        : 'Your payment reference is ready.'}
               </h3>
               <p>
                 <strong>{money(receipt.donation.amountCents)}</strong> ·{' '}
-                {methodNames[receipt.donation.method]}
+                {paymentName(receipt.donation.method)}
               </p>
               {receipt.donation.refundedCents > 0 && (
                 <p>
@@ -829,7 +853,16 @@ function PublicPage({ slug, athleteId }) {
               <Field label="Unique donation reference">
                 <input readOnly value={receipt.donation.reference} />
               </Field>
-              {receipt.donation.method === 'stripe' ? (
+              {sandbox ? (
+                <>
+                  {receipt.donation.status === 'pending' && (
+                    <Notice>Waiting for Stripe to confirm the test payment.</Notice>
+                  )}
+                  <button onClick={refreshSandboxReceipt} disabled={busy}>
+                    Refresh Stripe payment status
+                  </button>
+                </>
+              ) : receipt.donation.method === 'stripe' ? (
                 receipt.donation.status === 'pending' && (
                   <>
                     <Notice>
@@ -971,7 +1004,7 @@ function PublicPage({ slug, athleteId }) {
                       checked={form.method === method}
                       onChange={() => setForm({ ...form, method })}
                     />
-                    {methodNames[method]}
+                    {paymentName(method)}
                   </label>
                 ))}
               </fieldset>
@@ -997,12 +1030,15 @@ function PublicPage({ slug, athleteId }) {
                 {busy
                   ? 'Processing…'
                   : form.method === 'stripe'
-                    ? 'Start simulated card contribution →'
+                    ? sandbox
+                      ? 'Continue to Stripe test checkout →'
+                      : 'Start simulated card contribution →'
                     : 'Get payment reference →'}
               </button>
               <small>
-                No platform percentage. Payment processing fees may apply. All payments in this
-                prototype are simulated.
+                {sandbox
+                  ? 'Use a fictional email at example.com or example.test. Stripe processes test cards only.'
+                  : 'No platform percentage. Payment processing fees may apply. All payments in this prototype are simulated.'}
               </small>
               <p className="receipt-wording">{c.receiptWording}</p>
             </form>
@@ -1470,6 +1506,7 @@ function Admin() {
             Field={Field}
             Notice={Notice}
             pilot={data.mode === 'pilot'}
+            stripeSandbox={data.mode === 'stripe-sandbox'}
             owner={data.mode !== 'pilot' || data.administrator.role === 'owner'}
             onRehearsal={async () => {
               const result = await mutate(
@@ -3238,11 +3275,19 @@ export default function App() {
     <>
       <div className="prototype-banner">
         <span className="sim-dot" />
-        <strong>{runtime?.mode === 'pilot' ? 'TVVC PILOT PREPARATION' : 'REVIEW PROTOTYPE'}</strong>
+        <strong>
+          {runtime?.mode === 'pilot'
+            ? 'TVVC PILOT PREPARATION'
+            : runtime?.mode === 'stripe-sandbox'
+              ? 'STRIPE SANDBOX'
+              : 'REVIEW PROTOTYPE'}
+        </strong>
         <span>
           {runtime?.mode === 'pilot'
             ? 'Public fundraising, payments & email are disabled.'
-            : 'Payments & email delivery are simulated. Use fictional data only.'}
+            : runtime?.mode === 'stripe-sandbox'
+              ? 'Use Stripe test cards and fictional details.'
+              : 'Payments & email delivery are simulated. Use fictional data only.'}
         </span>
       </div>
       <header className="site-header">

@@ -228,6 +228,11 @@ export function changeDues(service, orgId, campaignId, athleteId, input, actor) 
       const d = input.donationId
         ? donations(service, a).find((d) => d.id === input.donationId)
         : null;
+      if (
+        d?.paymentProvider === 'stripe-sandbox' &&
+        !['post', 'withdrawal-post'].includes(input.action)
+      )
+        throw new AppError('Use Stripe to change a sandbox payment or refund.', 409);
       if (input.action === 'family-payment') {
         const amount = cents(input.amount);
         requireValue(amount > 0, 'Payment must be positive.');

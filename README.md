@@ -4,6 +4,8 @@ Working first milestone for Century High School volleyball and TVVC. The origina
 
 **Review simulation only.** No live payment processor, email transport, production webhook, or background delivery service is connected. Sample athletes, contacts, administrator identities, donations, fees, and emails are fictional. Use fictional donor/minor information only. The local server listens on loopback; the Netlify review deployment uses a hosted API and separate transactional database.
 
+An opt-in [local Stripe sandbox rehearsal](docs/Stripe_Sandbox.md) exercises Stripe test checkout, signed webhooks, actual test fees, dues credits and partial refunds with its own fictional data.
+
 ## Run locally
 
 Node.js 22.12+ and npm are required. From PowerShell:
