@@ -1176,14 +1176,17 @@ export class Fundraiser {
     } = c;
     const athletes = this.state.athletes
       .filter((a) => a.campaignId === c.id)
-      .map((a) => ({
-        id: a.id,
-        displayName: a.approved ? a.approvedProfile.displayName : a.displayName,
-        team: a.team,
-        photo: a.approved ? a.approvedProfile.photo : '',
-        message: a.approved ? a.approvedProfile.message : '',
-        totalCents: this.totals(c.id, a.id).grossCents,
-      }));
+      .map((a) => {
+        const profile = a.approved ? a.approvedProfile : null;
+        return {
+          id: a.id,
+          displayName: profile?.displayName || 'Player',
+          team: a.team,
+          photo: profile?.photo || '',
+          message: profile?.message || '',
+          totalCents: this.totals(c.id, a.id).grossCents,
+        };
+      });
     const athlete = athleteId
       ? athletes.find((a) => a.id === athleteId) || fail('Athlete page not found.', 404)
       : null;

@@ -344,7 +344,9 @@ function Home() {
   );
 }
 function Athlete({ token }) {
-  const { data, setData, error } = useResource(`/api/athlete/${encodeURIComponent(token)}`);
+  const { data, setData, error, refresh } = useResource(
+    `/api/athlete/${encodeURIComponent(token)}`,
+  );
   const [emails, setEmails] = useState(''),
     [profile, setProfile] = useState(null),
     [message, setMessage] = useState(''),
@@ -371,7 +373,7 @@ function Athlete({ token }) {
       setData(result);
       const resultInfo = result.contactResult;
       setMessage(
-        `Progress saved.${resultInfo ? ` ${resultInfo.added.length} added; ${resultInfo.duplicates.length} duplicate(s).${resultInfo.invalid?.length ? ` Invalid: ${resultInfo.invalid.join(', ')}.` : ''}` : ''}${done ? ' Setup complete. Your coach reviews your public content before invitations can send.' : ''}`,
+        `Progress saved.${resultInfo ? ` ${resultInfo.added.length} added; ${resultInfo.duplicates.length} duplicate(s).${resultInfo.invalid?.length ? ` Invalid: ${resultInfo.invalid.join(', ')}.` : ''}` : ''}${done ? ' Setup complete.' : ''}`,
       );
       if (!resultInfo?.invalid?.length) setEmails('');
     } catch (e) {
@@ -525,8 +527,8 @@ function Athlete({ token }) {
                 onChange={(e) => setProfile({ ...profile, authorization: e.target.checked })}
               />
               <span>
-                I have athlete/guardian authorization to submit this photo and message for public
-                use. My coach will review it before publication.
+                I have athlete/guardian authorization to submit this display name, photo, and
+                message for public use. My coach will review them before publication.
               </span>
             </label>
           </div>
@@ -542,13 +544,22 @@ function Athlete({ token }) {
           </button>
         </div>
       </form>
-      {data.athlete.completed && (
-        <Share
-          path={data.publicPath}
-          title={`${profile.displayName}’s volleyball fundraiser`}
-          organization={data.campaign.organizationName}
-        />
-      )}
+      {data.athlete.completed &&
+        (data.athlete.approved ? (
+          <Share
+            path={data.publicPath}
+            title={`${data.athlete.displayName}’s volleyball fundraiser`}
+            organization={data.campaign.organizationName}
+          />
+        ) : (
+          <section className="share-box">
+            <h3>Waiting for coach approval</h3>
+            <p>Your fundraising link will appear after your coach approves your public profile.</p>
+            <button type="button" className="secondary" onClick={refresh}>
+              Check approval status
+            </button>
+          </section>
+        ))}
     </main>
   );
 }

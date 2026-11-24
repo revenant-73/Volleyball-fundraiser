@@ -104,6 +104,14 @@ test('390px athlete setup saves photo/message and two contacts, resumes and comp
   );
   await expect(page.getByAltText('Your uploaded profile preview')).toBeVisible();
   await page.getByRole('button', { name: 'Done →', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Waiting for coach approval' })).toBeVisible();
+  await expect(page.getByLabel('Public fundraising URL')).toHaveCount(0);
+  const approval = await page.request.post(
+    `/api/admin/campaigns/${c.id}/athletes/${a.athlete.id}/approve`,
+    { headers, data: { approved: true, authorizationNote: 'Synthetic guardian approval.' } },
+  );
+  expect(approval.ok()).toBeTruthy();
+  await page.getByRole('button', { name: 'Check approval status' }).click();
   await expect(page.getByLabel('Public fundraising URL')).toHaveValue(
     new RegExp(`/c/${c.slug}/a/${a.athlete.id}`),
   );

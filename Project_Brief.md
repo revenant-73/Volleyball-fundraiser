@@ -38,7 +38,7 @@ One mobile-friendly setup flow:
 
 Twenty email addresses is a recommendation, not a requirement or limit. Allow pasting multiple addresses, validate them, and identify duplicates.
 
-Save progress so interrupted setup can resume. After completion, show the athlete’s public fundraising link and sharing controls. Athletes can return through their secure link to add more contacts.
+Save progress so interrupted setup can resume. After the coach approves the completed public profile, show the athlete’s public fundraising link and sharing controls. Athletes can return through their secure link to add more contacts.
 
 Keep private setup links separate from public donation links. Private links must be revocable and protected against guessing. Administrator access requires authentication.
 

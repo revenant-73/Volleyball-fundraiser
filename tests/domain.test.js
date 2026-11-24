@@ -102,10 +102,22 @@ test('unapproved completion after launch queues only after recorded admin approv
 test('profile changes invalidate approval and keep new content out of public view', () => {
   const { s, c, athletes, links } = setup();
   const a = athletes[0];
-  s.saveAthlete(links[a.id].split('/').at(-1), { message: 'Unreviewed changed message' });
+  const invite = links[a.id].split('/').at(-1);
+  const previousName = a.displayName;
+  assert.equal(s.publicView(c.slug, a.id).athlete.displayName, previousName);
+  const displayName = 'Unreviewed changed name';
+  const message = 'Unreviewed changed message';
+  s.saveAthlete(invite, { displayName, message });
   const view = s.publicView(c.slug, a.id);
+  assert.equal(view.athlete.displayName, 'Player');
+  assert.equal(view.athletes.find((player) => player.id === a.id).displayName, 'Player');
   assert.equal(view.athlete.message, '');
   assert.equal(a.approved, false);
+  assert.equal(s.athleteView(s.athleteByToken(invite)).athlete.displayName, displayName);
+  s.approve(c.orgId, c.id, a.id, { approved: true, authorizationNote: 'Fictional approval' });
+  assert.equal(s.publicView(c.slug, a.id).athlete.displayName, displayName);
+  s.approve(c.orgId, c.id, a.id, { approved: false });
+  assert.equal(s.publicView(c.slug, a.id).athlete.displayName, 'Player');
 });
 test('browser success cannot confirm; signed mock event updates once and blocks reminders', () => {
   const { s, c } = setup();
