@@ -160,6 +160,7 @@ export function createApp({
     }
     return checkoutsBeingCreated.get(donation.id);
   };
+  let stripeReconciliation = Promise.resolve();
   if (stripeSandbox)
     app.post(
       '/api/stripe-sandbox/webhook',
@@ -167,12 +168,27 @@ export function createApp({
       async (req, res) => {
         const event = stripeSandbox.verifyWebhook(req.body, req.get('Stripe-Signature'));
         const record = stripeEventRecord(event);
-        if (!stripeEventProcessed(service, record)) {
+        const reconcile = stripeReconciliation.then(async () => {
+          if (stripeEventProcessed(service, record)) return;
           const payment = await stripeSandbox.paymentForEvent(event, (id) =>
             sandboxDonation(service, id),
           );
-          if (payment) commitStripe(() => reconcileStripePayment(service, record, payment));
-        }
+          if (!payment) return;
+          const donation = checkoutRecord(service, payment.donationId);
+          const campaign = service.campaign(donation.orgId, donation.campaignId);
+          if (payment.checkoutState === 'declined' && campaign.donationsStoppedAt) {
+            const status = await stripeSandbox.expireCheckout(payment.sessionId);
+            commitStripe(() => {
+              recordSandboxCheckoutClosure(service, payment.donationId, status);
+              reconcileStripePayment(service, record, payment);
+            });
+          } else commitStripe(() => reconcileStripePayment(service, record, payment));
+          if (payment.disputeVerificationPending)
+            throw new AppError('Stripe dispute details are unavailable. Credit is on hold.', 503);
+        });
+        // Read Stripe and commit in the same order, including concurrent dispute deliveries.
+        stripeReconciliation = reconcile.catch(() => {});
+        await reconcile;
         res.json({ received: true });
       },
     );

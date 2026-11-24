@@ -859,6 +859,7 @@ export class Fundraiser {
       refundedCents: d.refundedCents || 0,
       disputeCents: d.disputeCents || 0,
       ...(d.paymentProvider ? { paymentProvider: d.paymentProvider } : {}),
+      ...(d.stripeCheckoutState ? { stripeCheckoutState: d.stripeCheckoutState } : {}),
     };
   }
   receipt(raw) {
@@ -986,6 +987,7 @@ export class Fundraiser {
       refundedCents: d.refundedCents || 0,
       disputeCents: d.disputeCents || 0,
       duesRedirectedCents: d.duesRedirectedCents || 0,
+      ...(d.stripeCheckoutState ? { stripeCheckoutState: d.stripeCheckoutState } : {}),
     };
   }
   audit(c, d, action, actor, before, note) {

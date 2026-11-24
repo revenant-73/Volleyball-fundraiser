@@ -15,6 +15,12 @@ const methodNames = {
   school: 'School payment portal',
   check: 'Mailed check',
 };
+const stripeCheckoutMessages = {
+  declined: 'Stripe declined this attempt. You can retry in the open Stripe checkout.',
+  processing: 'Stripe is processing this payment. The donation counts once Stripe confirms it.',
+  failed: 'Stripe confirmed that this payment failed.',
+  expired: 'This Stripe checkout expired without a payment.',
+};
 const pathUrl = (path) => new URL(path, window.location.origin).href;
 const date = (value) =>
   value ? (/^\d{4}-\d{2}-\d{2}$/.test(value) ? value : new Date(value).toLocaleString()) : '—';
@@ -880,8 +886,12 @@ function PublicPage({ slug, athleteId }) {
               </Field>
               {sandbox ? (
                 <>
-                  {receipt.donation.status === 'pending' && (
-                    <Notice>Waiting for Stripe to confirm the test payment.</Notice>
+                  {(stripeCheckoutMessages[receipt.donation.stripeCheckoutState] ||
+                    receipt.donation.status === 'pending') && (
+                    <Notice>
+                      {stripeCheckoutMessages[receipt.donation.stripeCheckoutState] ||
+                        'Waiting for Stripe to confirm the test payment.'}
+                    </Notice>
                   )}
                   <button onClick={refreshSandboxReceipt} disabled={busy}>
                     Refresh Stripe payment status
@@ -2410,6 +2420,9 @@ function Ledger({ campaign: c, mutate, base, busy, error, destination }) {
                 </td>
                 <td data-label="Status">
                   <Status value={d.status} />
+                  {stripeCheckoutMessages[d.stripeCheckoutState] && (
+                    <small>{stripeCheckoutMessages[d.stripeCheckoutState]}</small>
+                  )}
                   {d.status === 'pending' && d.reported === false && (
                     <small>
                       {d.method === 'stripe'

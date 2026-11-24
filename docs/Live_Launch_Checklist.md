@@ -11,7 +11,7 @@ Start with a small group of consenting families, one campaign and one payment me
 3. Approve the live financial rules, disclosures, consent, retention and recovery procedures. Record who monitors payments, resolves exceptions and can pause collection. Verify a current recovery file and assign a custodian for credential renewal.
 4. Obtain explicit approval to open the named campaign to the selected families. Expand after comparing settled payments, actual fees, posted dues credits and any refunds with the club's records.
 
-The [local Stripe rehearsal](Stripe_Sandbox.md) verifies provider test checkout, signed confirmation, actual fees, duplicate delivery and partial-refund reversal with fictional dues. Live payment configuration, dispute handling, reconciliation of abandoned or failed checkout, and launch approval remain open.
+The [local Stripe rehearsal](Stripe_Sandbox.md) covers signed confirmation, actual fees, duplicate delivery, refunds, failed and expired checkouts, disputes and settlement after a stop. Dispute outcomes and delayed bank settlement still need a provider sandbox with the applicable permissions and payment methods. Live configuration and launch approval remain open.
 
 ## Organization configuration
 

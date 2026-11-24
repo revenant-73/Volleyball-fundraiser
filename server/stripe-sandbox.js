@@ -103,20 +103,40 @@ export function pendingSandboxCheckouts(service, campaignId) {
 
 export function recordSandboxCheckoutClosure(service, donationId, terminalStatus) {
   const d = checkoutRecord(service, donationId);
+  if (terminalStatus === 'processing') {
+    reconcileCheckoutState(service, d, 'processing');
+    return;
+  }
   if (!['complete', 'expired'].includes(terminalStatus))
     throw new AppError('Stripe still has this checkout open.', 502);
   d.stripeCheckout.terminalStatus = terminalStatus;
-  if (terminalStatus !== 'expired' || d.status !== 'pending') return;
+  reconcileCheckoutState(service, d, terminalStatus === 'expired' ? 'expired' : 'processing');
+}
+
+const checkoutStateNotes = {
+  declined: 'Stripe declined a payment attempt. This checkout can still be retried.',
+  processing: 'Stripe is still processing this contribution.',
+  failed: 'Stripe confirmed the delayed payment failed.',
+  expired: 'Stripe confirmed that this unpaid checkout expired.',
+};
+
+function reconcileCheckoutState(service, d, state) {
+  if (d.status !== 'pending' || d.stripeCheckoutState === state) return;
+  if (state === 'declined' && d.stripeCheckout.terminalStatus === 'complete') return;
   const before = service.auditSnapshot(d);
-  d.status = 'rejected';
+  d.stripeCheckoutState = state;
+  if (state === 'failed' || state === 'expired') {
+    d.status = 'rejected';
+    d.stripeCheckout.terminalStatus = state === 'expired' ? 'expired' : 'complete';
+  }
   const campaign = service.campaign(d.orgId, d.campaignId);
   service.audit(
     campaign,
     d,
-    'stripe-sandbox-expired',
+    `stripe-sandbox-${state}`,
     'stripe-sandbox',
     before,
-    'Stripe confirmed that this unpaid checkout expired.',
+    checkoutStateNotes[state],
   );
 }
 
@@ -158,19 +178,47 @@ export function reconcileStripePayment(service, record, payment) {
     d.stripeCheckout?.id !== payment.sessionId ||
     d.amountCents !== payment.amountCents ||
     d.campaignId !== payment.campaignId ||
-    d.athleteId !== payment.athleteId ||
+    d.athleteId !== payment.athleteId
+  )
+    throw new AppError('Stripe payment does not match its donation reservation.', 409);
+  if (payment.checkoutState) {
+    reconcileCheckoutState(service, d, payment.checkoutState);
+    service.state.events[record.key] = record.fingerprint;
+    return;
+  }
+  if (
     (d.transaction && d.transaction !== payment.chargeId) ||
     (d.stripePaymentIntent && d.stripePaymentIntent !== payment.paymentIntentId)
   )
-    throw new AppError('Stripe payment does not match its donation reservation.', 409);
+    throw new AppError('Stripe payment does not match its original charge.', 409);
   const c = service.campaign(d.orgId, d.campaignId);
   const before = service.auditSnapshot(d);
   const firstConfirmation = !d.everConfirmed;
   const newFee = d.feeCents === null && payment.feeCents !== null;
-  const refunded = Math.max(d.refundedCents || 0, payment.refundedCents);
-  const newRefund = refunded > (d.refundedCents || 0);
+  const previouslyRefunded = d.stripeRefundedCents ?? d.refundedCents ?? 0;
+  const stripeRefunded = Math.max(previouslyRefunded, payment.refundedCents);
+  const newRefund = stripeRefunded > previouslyRefunded;
+  const disputes = { ...d.stripeDisputes };
+  const needsReview = Boolean(payment.disputeVerificationPending);
+  let disputesChanged = Boolean(d.stripeDisputeNeedsReview) !== needsReview;
+  for (const dispute of payment.disputes || []) {
+    const previous = disputes[dispute.id];
+    if (previous?.status === dispute.status && previous.amountCents === dispute.amountCents)
+      continue;
+    disputes[dispute.id] = dispute;
+    disputesChanged = true;
+  }
+  let lostCents = 0,
+    heldCents = 0;
+  for (const { status, amountCents } of Object.values(disputes)) {
+    if (['lost', 'appeal_needs_response', 'appeal_under_review'].includes(status))
+      lostCents += amountCents;
+    else if (!['won', 'warning_closed', 'prevented'].includes(status)) heldCents += amountCents;
+  }
+  const refunded = Math.min(d.amountCents, stripeRefunded + lostCents);
+  const disputed = Math.min(d.amountCents - refunded, needsReview ? d.amountCents : heldCents);
 
-  if (firstConfirmation || newFee || newRefund) {
+  if (firstConfirmation || newFee || newRefund || disputesChanged) {
     service.uniqueTransaction(d.orgId, d.method, payment.chargeId, d.id);
     Object.assign(d, {
       status: refunded === d.amountCents ? 'refunded' : 'confirmed',
@@ -178,29 +226,31 @@ export function reconcileStripePayment(service, record, payment) {
       receivedDate: payment.receivedDate,
       transaction: payment.chargeId,
       stripePaymentIntent: payment.paymentIntentId,
+      stripeCheckoutState: 'paid',
       feeCents: newFee ? payment.feeCents : d.feeCents,
+      stripeRefundedCents: stripeRefunded,
+      stripeDisputes: disputes,
+      stripeDisputeNeedsReview: needsReview,
       refundedCents: refunded,
+      disputeCents: disputed,
     });
-    service.audit(
-      c,
-      d,
-      newRefund
-        ? 'stripe-sandbox-refund'
+    d.stripeCheckout.terminalStatus = 'complete';
+    const auditAction = disputesChanged
+      ? 'dispute'
+      : newRefund
+        ? 'refund'
         : firstConfirmation
-          ? 'stripe-sandbox-confirm'
-          : 'stripe-sandbox-fee',
-      'stripe-sandbox',
-      before,
-      newRefund
-        ? 'Reconciled successful Stripe sandbox refunds.'
-        : 'Verified Stripe sandbox payment details.',
-    );
-    synchronizeDues(
-      service,
-      service.findAthlete(c.id, d.athleteId),
-      'stripe-sandbox',
-      newRefund ? 'Stripe refund reduced the available dues credit.' : 'Stripe payment reconciled.',
-    );
+          ? 'confirm'
+          : 'fee';
+    const reason = needsReview
+      ? 'Stripe dispute details are unavailable. The remaining credit is on hold.'
+      : disputesChanged
+        ? 'Reconciled the Stripe dispute and its effect on the available dues credit.'
+        : newRefund
+          ? 'Stripe refund reduced the available dues credit.'
+          : 'Verified Stripe sandbox payment details.';
+    service.audit(c, d, `stripe-sandbox-${auditAction}`, 'stripe-sandbox', before, reason);
+    synchronizeDues(service, service.findAthlete(c.id, d.athleteId), 'stripe-sandbox', reason);
   }
-  service.state.events[record.key] = record.fingerprint;
+  if (!needsReview) service.state.events[record.key] = record.fingerprint;
 }

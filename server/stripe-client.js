@@ -4,13 +4,22 @@ import { AppError } from './domain.js';
 const sessionEvents = new Set([
   'checkout.session.completed',
   'checkout.session.async_payment_succeeded',
+  'checkout.session.async_payment_failed',
+  'checkout.session.expired',
 ]);
 const chargeEvents = new Set(['charge.updated', 'charge.refunded']);
 const refundEvents = new Set(['refund.created', 'refund.updated', 'refund.failed']);
+const disputeEvents = new Set([
+  'charge.dispute.created',
+  'charge.dispute.updated',
+  'charge.dispute.closed',
+  'charge.dispute.funds_withdrawn',
+  'charge.dispute.funds_reinstated',
+]);
 const providerId = (value) => (typeof value === 'string' ? value : value?.id);
 const usdCents = (value) => Number.isSafeInteger(value) && value >= 0;
 
-export function createStripeSandboxClient({ key, webhookSecret, origin }) {
+export function createStripeSandboxClient({ key, webhookSecret, origin, httpClient }) {
   if (
     !/^(?:[rs]k|rkcs)_test_[a-zA-Z0-9]+$/.test(key || '') ||
     !/^whsec_[a-zA-Z0-9]+$/.test(webhookSecret || '')
@@ -19,7 +28,7 @@ export function createStripeSandboxClient({ key, webhookSecret, origin }) {
   const url = new URL(origin);
   if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.origin !== origin)
     throw new Error('Stripe sandbox Checkout must return to the local RallyFund app.');
-  const stripe = new Stripe(key, { maxNetworkRetries: 2, timeout: 10000 });
+  const stripe = new Stripe(key, { maxNetworkRetries: 2, timeout: 10000, httpClient });
   return {
     async createCheckout(donation, campaignSlug) {
       const metadata = {
@@ -68,10 +77,14 @@ export function createStripeSandboxClient({ key, webhookSecret, origin }) {
     async expireCheckout(id) {
       if (!id.startsWith('cs_test_'))
         throw new AppError('Only a Stripe test checkout can be expired here.', 400);
-      let session = await stripe.checkout.sessions.retrieve(id);
+      let session = await stripe.checkout.sessions.retrieve(id, { expand: ['payment_intent'] });
       if (session.livemode !== false || session.id !== id)
         throw new AppError('This checkout is outside the Stripe sandbox.', 409);
       if (session.status === 'open') {
+        if (
+          ['processing', 'succeeded', 'requires_capture'].includes(session.payment_intent?.status)
+        )
+          return 'processing';
         try {
           session = await stripe.checkout.sessions.expire(id);
         } catch {
@@ -100,14 +113,16 @@ export function createStripeSandboxClient({ key, webhookSecret, origin }) {
       const object = event.data.object;
       let donationId = object.metadata?.rallyfund_donation_id;
       let incomingChargeId = null;
+      const failedAttempt = event.type === 'payment_intent.payment_failed';
+      const disputeEvent = disputeEvents.has(event.type);
       if (chargeEvents.has(event.type)) {
         incomingChargeId = object.id;
-      } else if (refundEvents.has(event.type)) {
+      } else if (refundEvents.has(event.type) || disputeEvent) {
         incomingChargeId = providerId(object.charge);
         if (!incomingChargeId) return null;
         const charge = await stripe.charges.retrieve(incomingChargeId);
         donationId = charge.metadata?.rallyfund_donation_id;
-      } else if (!sessionEvents.has(event.type)) return null;
+      } else if (!sessionEvents.has(event.type) && !failedAttempt) return null;
 
       const d = findDonation(donationId);
       if (!d) return null;
@@ -130,9 +145,30 @@ export function createStripeSandboxClient({ key, webhookSecret, origin }) {
         session.metadata?.rallyfund_athlete_id !== d.athleteId
       )
         throw new AppError('Stripe Checkout details do not match the donation.', 409);
-      if (session.payment_status !== 'paid') return null;
-
       const intent = session.payment_intent;
+      const reservation = {
+        donationId: d.id,
+        sessionId: session.id,
+        campaignId: d.campaignId,
+        athleteId: d.athleteId,
+        amountCents: d.amountCents,
+      };
+      if (session.payment_status !== 'paid') {
+        if (session.status === 'expired') return { ...reservation, checkoutState: 'expired' };
+        if (session.status === 'complete') {
+          if (['canceled', 'requires_payment_method'].includes(intent?.status))
+            return { ...reservation, checkoutState: 'failed' };
+          return { ...reservation, checkoutState: 'processing' };
+        }
+        if (
+          failedAttempt &&
+          intent?.id === object.id &&
+          intent.status === 'requires_payment_method'
+        )
+          return { ...reservation, checkoutState: 'declined' };
+        return null;
+      }
+
       const charge = intent?.latest_charge;
       if (!charge || typeof charge !== 'object')
         throw new AppError('Stripe has not finished recording the charge. Retry this event.', 503);
@@ -178,16 +214,43 @@ export function createStripeSandboxClient({ key, webhookSecret, origin }) {
         }
       if (refundedCents > d.amountCents)
         throw new AppError('Stripe refunds exceed the captured contribution.', 409);
+      const disputes = [];
+      let disputeVerificationPending = false;
+      if (
+        charge.disputed ||
+        disputeEvent ||
+        d.stripeDisputeNeedsReview ||
+        Object.keys(d.stripeDisputes || {}).length
+      ) {
+        try {
+          for await (const dispute of stripe.disputes.list({ charge: charge.id, limit: 100 })) {
+            if (
+              dispute.livemode !== false ||
+              providerId(dispute.charge) !== charge.id ||
+              dispute.currency !== 'usd' ||
+              !usdCents(dispute.amount) ||
+              !/^dp_[a-z0-9]+$/i.test(dispute.id || '')
+            )
+              throw new AppError('Stripe dispute does not match the original charge.', 409);
+            disputes.push({ id: dispute.id, status: dispute.status, amountCents: dispute.amount });
+          }
+          disputeVerificationPending =
+            (disputeEvent && !disputes.some((d) => d.id === object.id)) ||
+            ((charge.disputed || d.stripeDisputeNeedsReview) && disputes.length === 0);
+        } catch (error) {
+          if (!error.type?.startsWith('Stripe')) throw error;
+          // The charge is confirmed, but only the Disputes API can clear the credit hold.
+          disputeVerificationPending = true;
+        }
+      }
       return {
-        donationId: d.id,
-        sessionId: session.id,
-        campaignId: d.campaignId,
-        athleteId: d.athleteId,
-        amountCents: d.amountCents,
+        ...reservation,
         chargeId: charge.id,
         paymentIntentId: intent.id,
         feeCents,
         refundedCents,
+        disputes: disputeVerificationPending ? [] : disputes,
+        disputeVerificationPending,
         receivedDate: new Date(charge.created * 1000).toISOString().slice(0, 10),
       };
     },
