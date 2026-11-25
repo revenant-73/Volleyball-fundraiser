@@ -9,6 +9,7 @@
     "test:e2e:pilot": "playwright test --config=playwright.pilot.config.js",
     "dev": "node scripts/dev.js",
     "dev:stripe-sandbox": "node --env-file=.env.stripe-sandbox scripts/dev.js",
+    "rehearse:stripe-handoff": "npm run build && node --env-file=.env.stripe-sandbox scripts/verify-stripe-handoff.mjs",
     "start": "node server/index.js",
     "build": "vite build",
     "test": "node --test tests/*.test.js",

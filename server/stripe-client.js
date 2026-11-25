@@ -16,6 +16,14 @@ const disputeEvents = new Set([
   'charge.dispute.funds_withdrawn',
   'charge.dispute.funds_reinstated',
 ]);
+const failedPaymentEvent = 'payment_intent.payment_failed';
+export const stripeSandboxEvents = Object.freeze([
+  ...sessionEvents,
+  ...chargeEvents,
+  ...refundEvents,
+  ...disputeEvents,
+  failedPaymentEvent,
+]);
 const providerId = (value) => (typeof value === 'string' ? value : value?.id);
 const usdCents = (value) => Number.isSafeInteger(value) && value >= 0;
 
@@ -43,6 +51,8 @@ export function createStripeSandboxClient({ key, webhookSecret, origin, httpClie
       const session = await stripe.checkout.sessions.create(
         {
           mode: 'payment',
+          allowed_payment_method_types: ['card'],
+          wallet_options: { link: { display: 'never' } },
           client_reference_id: donation.id,
           customer_email: donation.email,
           metadata,
@@ -72,7 +82,21 @@ export function createStripeSandboxClient({ key, webhookSecret, origin, httpClie
         new URL(session.url).origin !== 'https://checkout.stripe.com'
       )
         throw new AppError('Stripe did not return an eligible sandbox Checkout Session.', 502);
-      return { id: session.id, url: session.url, expiresAt: session.expires_at };
+      const cardOnly =
+        session.payment_method_types?.length === 1 &&
+        session.payment_method_types[0] === 'card' &&
+        session.wallet_options?.link?.display === 'never';
+      if (!cardOnly) {
+        const expired = await stripe.checkout.sessions.expire(session.id).catch(() => null);
+        return {
+          id: session.id,
+          expiresAt: session.expires_at,
+          url: null,
+          cardOnly: false,
+          ...(expired?.status === 'expired' ? { terminalStatus: 'expired' } : {}),
+        };
+      }
+      return { id: session.id, url: session.url, expiresAt: session.expires_at, cardOnly: true };
     },
     async expireCheckout(id) {
       if (!id.startsWith('cs_test_'))
@@ -113,7 +137,7 @@ export function createStripeSandboxClient({ key, webhookSecret, origin, httpClie
       const object = event.data.object;
       let donationId = object.metadata?.rallyfund_donation_id;
       let incomingChargeId = null;
-      const failedAttempt = event.type === 'payment_intent.payment_failed';
+      const failedAttempt = event.type === failedPaymentEvent;
       const disputeEvent = disputeEvents.has(event.type);
       if (chargeEvents.has(event.type)) {
         incomingChargeId = object.id;
@@ -182,6 +206,7 @@ export function createStripeSandboxClient({ key, webhookSecret, origin, httpClie
         !charge.paid ||
         !charge.captured ||
         charge.amount_captured !== d.amountCents ||
+        (d.stripeCheckout.cardOnly && charge.payment_method_details?.type !== 'card') ||
         providerId(charge.payment_intent) !== intent.id ||
         (incomingChargeId && incomingChargeId !== charge.id)
       )

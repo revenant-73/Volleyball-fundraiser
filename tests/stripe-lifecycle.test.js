@@ -13,11 +13,14 @@ test('signed Stripe lifecycle events distinguish declines, expiry, stops and dis
   const sessions = new Map();
   let nextSession = 0;
   let disputeReadAvailable = true;
+  let mixedMethods = false;
   const providerFetch = async (url, options) => {
     const { pathname, searchParams } = new URL(url);
     const json = (object) => Response.json(object, { headers: { 'request-id': 'req_fixture' } });
     if (pathname === '/v1/checkout/sessions' && options.method === 'POST') {
       const form = new URLSearchParams(options.body);
+      assert.equal(form.get('allowed_payment_method_types[0]'), 'card');
+      assert.equal(form.get('wallet_options[link][display]'), 'never');
       const n = ++nextSession;
       const id = `cs_test_fixture${n}`;
       const amount = Number(form.get('line_items[0][price_data][unit_amount]'));
@@ -37,6 +40,7 @@ test('signed Stripe lifecycle events distinguish declines, expiry, stops and dis
         amount_refunded: 0,
         captured: true,
         paid: true,
+        payment_method_details: { type: 'card' },
         disputed: false,
         balance_transaction: { currency: 'usd', source: `ch_fixture${n}`, amount, fee: 320 },
       };
@@ -46,6 +50,8 @@ test('signed Stripe lifecycle events distinguish declines, expiry, stops and dis
         currency: 'usd',
         status: 'open',
         payment_status: 'unpaid',
+        payment_method_types: mixedMethods ? ['card', 'us_bank_account'] : ['card'],
+        wallet_options: { link: { display: 'never' } },
         amount_total: amount,
         client_reference_id: form.get('client_reference_id'),
         metadata,
@@ -185,6 +191,11 @@ test('signed Stripe lifecycle events distinguish declines, expiry, stops and dis
     row.session.payment_intent.status = 'succeeded';
     row.session.payment_intent.amount_received = row.session.amount_total;
   }
+  mixedMethods = true;
+  const refused = await data(request(checkoutPath, 'POST', pledge('11')), 502);
+  assert.equal(refused.checkoutUrl, undefined);
+  assert.equal([...sessions.values()][0].session.status, 'expired');
+  mixedMethods = false;
   const disputed = await start();
   const decline = event('payment_intent.payment_failed', disputed.session.payment_intent);
   await Promise.all([emit(decline), emit(decline)]);

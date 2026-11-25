@@ -32,15 +32,24 @@ test('invite-only Stripe sandbox preserves payment, refund, and stop state acros
     id: 'cs_test_fictionalfixture',
     url: 'https://checkout.stripe.com/c/pay/cs_test_fictionalfixture',
     expiresAt: Math.floor(Date.now() / 1000) + 3600,
+    cardOnly: true,
   };
   const stripeSandbox = {
     verifyWebhook,
-    async createCheckout() {
+    async createCheckout({ donorName }) {
       sessionCreations++;
       if (creationPaused) {
         creationPaused.notify();
         await creationPaused.wait;
       }
+      if (donorName === 'Fictional mixed Checkout donor')
+        return {
+          ...checkout,
+          id: `${checkout.id}${sessionCreations}`,
+          url: null,
+          cardOnly: false,
+          terminalStatus: 'expired',
+        };
       return sessionCreations === 1
         ? checkout
         : { ...checkout, id: `${checkout.id}${sessionCreations}` };
@@ -220,6 +229,18 @@ test('invite-only Stripe sandbox preserves payment, refund, and stop state acros
   });
   assert.equal(finishedAtStripe.status, 200);
   const delayed = (await finishedAtStripe.json()).donation;
+  const mixedPledge = {
+    ...pledge,
+    donorName: 'Fictional mixed Checkout donor',
+    requestId: randomUUID(),
+  };
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const mixed = await request(donationPath, 'POST', mixedPledge);
+    assert.equal(mixed.status, 502);
+    assert.equal((await mixed.json()).checkoutUrl, undefined);
+  }
+  assert.equal(sessionCreations, 3);
+  assert.equal((await detail()).ledger.filter((d) => d.status === 'rejected').length, 1);
   let resumeCreation;
   let notifyCreation;
   const creationStarted = new Promise((resolve) => {
@@ -276,7 +297,7 @@ test('invite-only Stripe sandbox preserves payment, refund, and stop state acros
   assert.equal(campaignAfter.contacts.length, 0);
   assert.equal(campaignAfter.jobs.length, 0);
   assert.equal(campaignAfter.ledger.filter((d) => d.status === 'confirmed').length, 1);
-  assert.equal(campaignAfter.ledger.filter((d) => d.status === 'rejected').length, 1);
+  assert.equal(campaignAfter.ledger.filter((d) => d.status === 'rejected').length, 2);
   assert.equal(campaignAfter.audit.filter((a) => a.action === 'stripe-sandbox-refund').length, 1);
   assert.equal(campaignAfter.ledger.find((d) => d.id === delayed.id).status, 'pending');
   const delayedEvent = event('evt_delayed1', 'checkout.session.completed');

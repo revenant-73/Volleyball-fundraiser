@@ -154,7 +154,13 @@ export function createApp({
         .catch(() => {
           throw new AppError('Stripe sandbox Checkout is unavailable. Please retry.', 502);
         })
-        .then((session) => commitStripe(() => attachCheckout(service, donation.id, session)))
+        .then((session) =>
+          commitStripe(() => {
+            attachCheckout(service, donation.id, session);
+            if (session.terminalStatus === 'expired')
+              recordSandboxCheckoutClosure(service, donation.id, 'expired');
+          }),
+        )
         .finally(() => checkoutsBeingCreated.delete(donation.id));
       checkoutsBeingCreated.set(donation.id, creation);
     }
@@ -749,8 +755,17 @@ export function createApp({
       if (!service.findAthlete(donation.campaignId, donation.athleteId).approved)
         throw new AppError('This player’s donation page is awaiting approval.', 409);
       const checkout = donation.stripeCheckout;
-      if (donation.status === 'pending' && checkout.expiresAt * 1000 <= Date.now())
-        throw new AppError('This Checkout Session expired. Start a new contribution.', 409);
+      if (checkout?.cardOnly === false)
+        throw new AppError('Stripe did not return a card-only Checkout Session.', 502);
+      if (donation.status === 'pending') {
+        if (checkout.expiresAt * 1000 <= Date.now())
+          throw new AppError('This Checkout Session expired. Start a new contribution.', 409);
+        if (!checkout.cardOnly)
+          throw new AppError(
+            'This earlier checkout is unavailable. Start a new card contribution.',
+            409,
+          );
+      }
       res.json({
         donation: service.receiptDonation(donation),
         receiptToken: result.receiptToken,
