@@ -4,6 +4,8 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { chromium, expect } from '@playwright/test';
+import jsQR from 'jsqr';
+import { PNG } from 'pngjs';
 import Stripe from 'stripe';
 import { createApp } from '../server/app.js';
 import {
@@ -26,9 +28,10 @@ const directory = `.local/stripe-handoff-rehearsals/${randomUUID()}`;
 const cli =
   process.env.RALLYFUND_STRIPE_CLI ||
   (existsSync('.local/stripe-tools/stripe.exe') ? '.local/stripe-tools/stripe.exe' : 'stripe');
-const credentials = hostedQa
-  ? JSON.parse(readFileSync('.local/hosted-stripe-qa-credentials.json', 'utf8'))
-  : { email: 'coach@tvvc.example', password: 'prototype-only' };
+const credentials = (role) =>
+  hostedQa
+    ? JSON.parse(readFileSync(`.local/hosted-stripe-qa-phone/${role}.json`, 'utf8'))
+    : { email: 'coach@tvvc.example', password: 'prototype-only' };
 let browser,
   listener,
   stage = 'starting the isolated sandbox';
@@ -134,18 +137,20 @@ try {
   });
   const donor = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const admin = await browser.newPage({ viewport: { width: 390, height: 844 } });
-  const login = async (page) =>
-    checked(
+  const login = async (page, role) => {
+    const { email, password } = credentials(role);
+    return checked(
       await page.request.post(origin + '/api/login', {
         headers,
-        data: { email: credentials.email, password: credentials.password },
+        data: { email, password },
       }),
     );
+  };
   const campaign = async (page) =>
     (await checked(await page.request.get(origin + '/api/admin'))).campaigns[0];
 
   stage = 'coach issues the link and approves the fictional player';
-  await login(coach);
+  await login(coach, 'coach');
   assert.equal((await checked(await coach.request.get(origin + '/api/admin'))).campaigns.length, 1);
   const initial = await campaign(coach);
   const athlete = initial.athletes[0];
@@ -162,6 +167,7 @@ try {
   await player.getByRole('button', { name: 'Done →', exact: true }).click();
   await expect(player.getByRole('heading', { name: 'Waiting for coach approval' })).toBeVisible();
   await expect(player.getByLabel('Public fundraising URL')).toHaveCount(0);
+  await expect(player.getByRole('button', { name: 'Show QR code' })).toHaveCount(0);
   assert.equal(
     (
       await donor.request.get(`${origin}/api/public/${initial.slug}?athlete=${athlete.id}`)
@@ -186,6 +192,11 @@ try {
   await expect(player.getByText('Public link copied.', { exact: true })).toBeVisible();
   const share = await player.evaluate(() => navigator.clipboard.readText());
   assert.equal(share, `${origin}/c/${initial.slug}/a/${athlete.id}`);
+  await player.getByRole('button', { name: 'Show QR code', exact: true }).click();
+  const qr = player.getByRole('img', { name: 'QR code for the public test donation link' });
+  await expect(qr).toBeVisible();
+  const png = PNG.sync.read(Buffer.from((await qr.getAttribute('src')).split(',')[1], 'base64'));
+  assert.equal(jsQR(new Uint8ClampedArray(png.data), png.width, png.height)?.data, share);
 
   stage = 'donor pays through a verified card-only Stripe Checkout Session';
   assert.equal((await donor.request.get(origin + '/api/admin')).status(), 401);
@@ -221,7 +232,7 @@ try {
 
   stage = 'a separate admin session reconciles and posts the dues credit';
   assert.equal((await admin.request.get(origin + '/api/admin')).status(), 401);
-  await login(admin);
+  await login(admin, 'dues-admin');
   const source = async () => (await campaign(admin)).ledger[0];
   const dues = async () => (await campaign(admin)).athletes[0].dues;
   await expect

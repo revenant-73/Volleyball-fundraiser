@@ -4,6 +4,7 @@ import { createPilotHandler } from '../../server/pilot/handler.js';
 import { hostedPilotResources } from '../../server/pilot/host.js';
 import { createStripeSandboxClient, STRIPE_QA_ORIGIN } from '../../server/stripe-client.js';
 import { assertStripeQaContext, STRIPE_QA_MODE, STRIPE_QA_SITE } from '../../server/stripe-qa.js';
+import { QA_COACH, QA_DUES_ADMIN } from '../../server/stripe-sandbox.js';
 
 let pool;
 let qaStripe;
@@ -21,7 +22,10 @@ export default async (request, context) => {
       pool ||= getDatabase().pool;
       return createHostedHandler({
         pool,
-        password: Netlify.env.get('RALLYFUND_QA_PASSWORD'),
+        qaPasswords: {
+          [QA_COACH]: Netlify.env.get('RALLYFUND_QA_COACH_PASSWORD'),
+          [QA_DUES_ADMIN]: Netlify.env.get('RALLYFUND_QA_DUES_PASSWORD'),
+        },
         origins: [STRIPE_QA_ORIGIN],
         stripeSandbox: qaStripe,
       })(request, context);

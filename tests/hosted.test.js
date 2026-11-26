@@ -6,6 +6,7 @@ import Stripe from 'stripe';
 import { createHostedHandler, transactSnapshot } from '../server/hosted.js';
 import { createStripeSandboxClient, STRIPE_QA_ORIGIN } from '../server/stripe-client.js';
 import { assertStripeQaContext, STRIPE_QA_MODE, STRIPE_QA_SITE } from '../server/stripe-qa.js';
+import { QA_COACH, QA_DUES_ADMIN } from '../server/stripe-sandbox.js';
 
 const origin = 'https://review.example.test';
 const password = 'fictional-review-password-for-tests';
@@ -63,7 +64,7 @@ test('hosted API transactions, cold starts, capabilities and access control', as
   const detail = async () => (await (await request('/api/admin')).json()).campaigns[0];
 
   await t.test(
-    'uses isolated QA data, secure cookies, and byte-exact Stripe signatures',
+    'uses separate QA logins, isolated data, and byte-exact Stripe signatures',
     async () => {
       const key = 'sk_test_fixture';
       const webhookSecret = 'whsec_testfixture';
@@ -73,9 +74,13 @@ test('hosted API transactions, cold starts, capabilities and access control', as
         origin: STRIPE_QA_ORIGIN,
       });
       const stripe = new Stripe(key);
+      const qaPasswords = {
+        [QA_COACH]: 'fictional-qa-coach-password',
+        [QA_DUES_ADMIN]: 'fictional-qa-dues-admin-password',
+      };
       const qa = createHostedHandler({
         pool,
-        password,
+        qaPasswords,
         origins: [STRIPE_QA_ORIGIN],
         stripeSandbox,
       });
@@ -92,18 +97,49 @@ test('hosted API transactions, cold starts, capabilities and access control', as
             },
           }),
         );
-      const login = await qaRequest(
-        '/api/login',
-        'POST',
-        JSON.stringify({ email: 'coach@tvvc.example', password }),
-      );
+      const signIn = (email, password) =>
+        qaRequest('/api/login', 'POST', JSON.stringify({ email, password }));
+      assert.equal((await signIn('coach@tvvc.example', qaPasswords[QA_DUES_ADMIN])).status, 401);
+      assert.equal((await signIn('dues-admin@tvvc.example', qaPasswords[QA_COACH])).status, 401);
+      const login = await signIn('coach@tvvc.example', qaPasswords[QA_COACH]);
       assert.equal(login.status, 200);
       assert.match(login.headers.get('set-cookie'), /Secure/);
       const cookie = login.headers.get('set-cookie').split(';')[0];
       const detail = await (await qaRequest('/api/admin', 'GET', undefined, { cookie })).json();
+      assert.equal(detail.qaRole, QA_COACH);
       assert.equal(detail.campaigns.length, 1);
-      assert.equal(detail.campaigns[0].athletes[0].approved, false);
-      assert.deepEqual(detail.campaigns[0].contacts, []);
+      const [campaign] = detail.campaigns;
+      const [player] = campaign.athletes;
+      assert.equal(campaign.status, 'draft');
+      assert.equal(player.approved, false);
+      assert.deepEqual(campaign.contacts, []);
+      assert.deepEqual(campaign.ledger, []);
+      const base = `/api/admin/campaigns/${campaign.id}`;
+      const invitePath = `${base}/athletes/${player.id}/invite`;
+      assert.equal((await qaRequest(invitePath, 'POST', '{}', { cookie })).status, 200);
+      assert.equal(
+        (await qaRequest(`${base}/dues/${player.id}`, 'POST', '{}', { cookie })).status,
+        403,
+      );
+      assert.equal(
+        (await qaRequest(`${base}/dues-export`, 'GET', undefined, { cookie })).status,
+        403,
+      );
+      const duesLogin = await signIn('dues-admin@tvvc.example', qaPasswords[QA_DUES_ADMIN]);
+      assert.equal(duesLogin.status, 200);
+      const duesHeaders = { cookie: duesLogin.headers.get('set-cookie').split(';')[0] };
+      const dues = await (await qaRequest('/api/admin', 'GET', undefined, duesHeaders)).json();
+      assert.equal(dues.qaRole, QA_DUES_ADMIN);
+      assert.equal(dues.campaigns[0].athletes[0].privatePath, undefined);
+      assert.equal((await qaRequest(invitePath, 'POST', '{}', duesHeaders)).status, 403);
+      assert.equal(
+        (await qaRequest(`${base}/stop-donations`, 'POST', '{}', duesHeaders)).status,
+        403,
+      );
+      assert.equal(
+        (await qaRequest(`${base}/dues-export`, 'GET', undefined, duesHeaders)).status,
+        200,
+      );
       assert.equal((await request('/api/admin', 'GET', undefined, { cookie })).status, 401);
       const event =
         '{"id":"evt_fixture","type":"customer.created","livemode":false,"data":{"object":{"id":"cus_fixture","name":"Fictional Á"}}}\n';

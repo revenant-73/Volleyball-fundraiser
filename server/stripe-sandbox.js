@@ -3,6 +3,8 @@ import { AppError, createSeed, Fundraiser, hash } from './domain.js';
 import { changeDues, synchronizeDues } from './dues.js';
 
 export const STRIPE_SANDBOX = 'stripe-sandbox';
+export const QA_COACH = 'qa-coach';
+export const QA_DUES_ADMIN = 'qa-dues-admin';
 
 export function createStripeSandboxSeed() {
   const { state } = createSeed();

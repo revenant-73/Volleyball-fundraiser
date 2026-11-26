@@ -645,6 +645,12 @@ code {
   font-size: 12px;
   padding: 10px 12px;
 }
+.share-qr {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-top: 16px;
+}
 .public-page {
   max-width: 1350px;
   margin: auto;

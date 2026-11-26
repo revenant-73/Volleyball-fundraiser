@@ -3,7 +3,8 @@ import { randomBytes, scryptSync } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { createApp } from './app.js';
 import { createSeed, hash } from './domain.js';
-import { createStripeSandboxSeed } from './stripe-sandbox.js';
+import { createStripeQaPhoneSeed, STRIPE_QA_PHONE_SNAPSHOT } from './stripe-qa.js';
+import { QA_COACH, QA_DUES_ADMIN } from './stripe-sandbox.js';
 
 // One locked snapshot deliberately reuses the tested milestone domain model.
 // The database serializes writers across function instances; responses leave
@@ -47,12 +48,16 @@ export async function transactSnapshot(pool, initial, operation, snapshotId = 'r
   }
 }
 
-function protectReview(snapshot, password) {
-  const version = hash(password);
+function protectHostedLogins(snapshot, password, qaPasswords) {
+  const version = hash(qaPasswords ? JSON.stringify(qaPasswords) : password);
   if (snapshot.state.reviewPasswordVersion === version) return;
   for (const user of snapshot.state.users) {
     user.salt = randomBytes(16).toString('hex');
-    user.passwordHash = scryptSync(password, user.salt, 64).toString('hex');
+    user.passwordHash = scryptSync(
+      qaPasswords ? qaPasswords[user.role] : password,
+      user.salt,
+      64,
+    ).toString('hex');
   }
   snapshot.state.reviewPasswordVersion = version;
   // Rotating the hosted password also revokes old administrator sessions.
@@ -65,11 +70,24 @@ const errorResponse = (message) =>
     { status: 503, headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } },
   );
 
-export function createHostedHandler({ pool, password, origins, stripeSandbox = null }) {
+export function createHostedHandler({
+  pool,
+  password,
+  origins,
+  stripeSandbox = null,
+  qaPasswords = null,
+}) {
   const label = stripeSandbox ? 'Hosted QA' : 'Hosted review';
+  const usablePassword = (value) =>
+    typeof value === 'string' && value.length >= 24 && value.length <= 200;
   return async (request, context = {}) => {
     // Never fall back to published local credentials or ephemeral storage.
-    if (!password || password.length < 24)
+    const validCredentials = stripeSandbox
+      ? usablePassword(qaPasswords?.[QA_COACH]) &&
+        usablePassword(qaPasswords?.[QA_DUES_ADMIN]) &&
+        qaPasswords[QA_COACH] !== qaPasswords[QA_DUES_ADMIN]
+      : usablePassword(password);
+    if (!validCredentials)
       return errorResponse(`${label} access is not configured. Contact the project administrator.`);
     const url = new URL(request.url);
     if (!origins.includes(url.origin)) return new Response('Unknown review host.', { status: 403 });
@@ -86,9 +104,9 @@ export function createHostedHandler({ pool, password, origins, stripeSandbox = n
     try {
       return await transactSnapshot(
         pool,
-        stripeSandbox ? createStripeSandboxSeed : createSeed,
+        stripeSandbox ? createStripeQaPhoneSeed : createSeed,
         async (snapshot) => {
-          protectReview(snapshot, password);
+          protectHostedLogins(snapshot, password, stripeSandbox ? qaPasswords : null);
           const runtime = createApp({
             seed: snapshot,
             hosted: true,
@@ -125,7 +143,7 @@ export function createHostedHandler({ pool, password, origins, stripeSandbox = n
             }),
           };
         },
-        stripeSandbox ? 'stripe-qa-v1' : 'review-v1',
+        stripeSandbox ? STRIPE_QA_PHONE_SNAPSHOT : 'review-v1',
       );
     } catch (error) {
       // Connection strings, payloads, URLs, contact lists and capabilities must

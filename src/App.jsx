@@ -135,10 +135,12 @@ function useResource(path) {
   }, [path]);
   return { data, setData, error, refresh };
 }
-function Share({ path, title, organization }) {
+function Share({ path, title, organization, testOnly = false }) {
   const [message, setMessage] = useState(''),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    [qr, setQr] = useState(null);
   const url = pathUrl(path);
+  const qrVisible = qr?.url === url;
   async function copy() {
     try {
       await navigator.clipboard.writeText(url);
@@ -152,6 +154,14 @@ function Share({ path, title, organization }) {
       await navigator.share({ title, text: `Support ${organization || title}`, url });
     } catch (e) {
       if (e.name !== 'AbortError') setMessage('Sharing is unavailable. Copy the link instead.');
+    }
+  }
+  async function toggleQr() {
+    if (qrVisible) return setQr(null);
+    try {
+      setQr({ url, src: await QRCode.toDataURL(url, { width: 300, margin: 4 }) });
+    } catch {
+      setMessage('The QR code could not be created. Use Copy link instead.');
     }
   }
   async function graphic() {
@@ -213,7 +223,11 @@ function Share({ path, title, organization }) {
   return (
     <section className="share-box">
       <h3>Pass it on.</h3>
-      <p>Share the public page with your community.</p>
+      <p>
+        {testOnly
+          ? 'Share the test link with your rehearsal partner.'
+          : 'Share the public page with your community.'}
+      </p>
       <input
         aria-label="Public fundraising URL"
         readOnly
@@ -229,37 +243,56 @@ function Share({ path, title, organization }) {
             Share…
           </button>
         )}
-        <a
-          className="button secondary"
-          href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Facebook
-        </a>
-        <button className="secondary" disabled={busy} onClick={graphic}>
-          {busy ? 'Creating…' : 'Instagram QR graphic ↓'}
-        </button>
+        {testOnly ? (
+          <button className="secondary" aria-expanded={qrVisible} onClick={toggleQr}>
+            {qrVisible ? 'Hide QR code' : 'Show QR code'}
+          </button>
+        ) : (
+          <>
+            <a
+              className="button secondary"
+              href={`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Facebook
+            </a>
+            <button className="secondary" disabled={busy} onClick={graphic}>
+              {busy ? 'Creating…' : 'Instagram QR graphic ↓'}
+            </button>
+          </>
+        )}
       </div>
+      {qrVisible && (
+        <img
+          className="share-qr"
+          src={qr.src}
+          width="240"
+          height="240"
+          alt="QR code for the public test donation link"
+        />
+      )}
       <Notice>{message}</Notice>
     </section>
   );
 }
 function Login({ onLogin }) {
   const { data: runtime } = useResource('/api/runtime');
+  const hostedQa = runtime?.hosted && runtime.mode === 'stripe-sandbox';
+  const individualLogin = runtime?.mode === 'pilot' || hostedQa;
   const [email, setEmail] = useState('coach@tvvc.example'),
     [password, setPassword] = useState(''),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (runtime?.mode === 'pilot') {
+    if (individualLogin) {
       setEmail('');
       setPassword('');
     } else if (runtime && !runtime.hosted) {
       setPassword('prototype-only');
       if (runtime.mode === 'stripe-sandbox') setEmail('coach@tvvc.example');
     }
-  }, [runtime?.hosted, runtime?.mode]);
+  }, [individualLogin, runtime?.hosted, runtime?.mode]);
   return (
     <form
       className="login-form"
@@ -276,13 +309,15 @@ function Login({ onLogin }) {
         }
       }}
     >
-      <h2>Coach’s corner</h2>
+      <h2>{hostedQa ? 'RallyFund QA sign-in' : 'Coach’s corner'}</h2>
       <p>
-        {runtime?.mode === 'pilot'
-          ? 'Sign in with your individual administrator account.'
-          : 'Sign in to review the complete administrator flow.'}
+        {hostedQa
+          ? 'Sign in with your assigned QA account.'
+          : runtime?.mode === 'pilot'
+            ? 'Sign in with your individual administrator account.'
+            : 'Sign in to review the complete administrator flow.'}
       </p>
-      {runtime?.mode === 'pilot' ? (
+      {individualLogin ? (
         <Field
           label="Administrator email"
           type="email"
@@ -302,24 +337,20 @@ function Login({ onLogin }) {
         </Field>
       )}
       <Field
-        label={
-          runtime?.mode === 'pilot'
-            ? 'Password'
-            : runtime?.hosted
-              ? 'Review password'
-              : 'Demo password'
-        }
+        label={individualLogin ? 'Password' : runtime?.hosted ? 'Review password' : 'Demo password'}
         type="password"
         autoComplete="current-password"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
       />
       <small>
-        {runtime?.mode === 'pilot'
-          ? 'Need account recovery? Contact the organization owner. Email recovery is not enabled.'
-          : runtime?.hosted
-            ? 'Use the private review password supplied by the project owner.'
-            : 'Local demo password: prototype-only'}
+        {hostedQa
+          ? 'Use the private login supplied for your rehearsal role.'
+          : runtime?.mode === 'pilot'
+            ? 'Need account recovery? Contact the organization owner. Email recovery is not enabled.'
+            : runtime?.hosted
+              ? 'Use the private review password supplied by the project owner.'
+              : 'Local demo password: prototype-only'}
       </small>
       <Notice kind="error">{error}</Notice>
       <button disabled={busy || !runtime}>{busy ? 'Signing in…' : 'Open administration →'}</button>
@@ -601,6 +632,7 @@ function Athlete({ token }) {
             path={data.publicPath}
             title={`${data.athlete.displayName}’s volleyball fundraiser`}
             organization={data.campaign.organizationName}
+            testOnly={data.stripeSandbox}
           />
         ) : (
           <section className="share-box">
@@ -1109,6 +1141,7 @@ function PublicPage({ slug, athleteId }) {
             path={data.publicPath}
             title={a ? `${a.displayName}’s volleyball fundraiser` : c.name}
             organization={c.organizationName}
+            testOnly={sandbox}
           />
           <p className="privacy-note">
             Donor contact lists stay private. Public pages display approved athlete content only.
@@ -1356,7 +1389,7 @@ function AdminAccount({ administrator, onSignedOut }) {
 function Admin() {
   const { data, setData, error, refresh } = useResource('/api/admin');
   const [selected, setSelected] = useState(''),
-    [tab, setTab] = useState('Dashboard'),
+    [requestedTab, setTab] = useState('Dashboard'),
     [feedback, setFeedback] = useState(''),
     [failure, setFailure] = useState(''),
     [busy, setBusy] = useState(false),
@@ -1365,6 +1398,14 @@ function Admin() {
     [destination, setDestination] = useState({ filter: 'all', key: 0 });
   const selectedCampaign = data?.campaigns.find((c) => c.id === selected) || data?.campaigns[0];
   const stripeSandbox = data?.mode === 'stripe-sandbox';
+  const qaRole = data?.qaRole;
+  const qaTabs =
+    qaRole === 'qa-coach'
+      ? ['Dashboard', 'Athletes']
+      : qaRole === 'qa-dues-admin'
+        ? ['Dues', 'Donations']
+        : null;
+  const tab = qaTabs && !qaTabs.includes(requestedTab) ? qaTabs[0] : requestedTab;
   const campaign =
     data?.mode === 'pilot' && selectedCampaign
       ? { ...selectedCampaign, preparationOnly: true }
@@ -1409,7 +1450,9 @@ function Admin() {
   return (
     <main className="admin-shell simplified-admin">
       <aside className="admin-sidebar">
-        <div className="eyebrow">Coach’s workspace</div>
+        <div className="eyebrow">
+          {qaRole === 'qa-dues-admin' ? 'Dues admin workspace' : 'Coach’s workspace'}
+        </div>
         <h2>{data.organization.name || data.organization.displayName || 'Organization'}</h2>
         <nav aria-label="Administrator sections">
           {(data.mode === 'pilot'
@@ -1422,7 +1465,7 @@ function Admin() {
                 'Account',
               ]
             : stripeSandbox
-              ? ['Dashboard', 'Athletes', 'Donations', 'Dues']
+              ? qaTabs || ['Dashboard', 'Athletes', 'Donations', 'Dues']
               : adminTabs
           ).map((item) => (
             <button
@@ -1450,7 +1493,7 @@ function Admin() {
               refresh();
             }}
           >
-            {data.mode === 'pilot' ? 'Sign out' : 'Switch organization / sign out'}
+            {data.mode === 'pilot' || qaRole ? 'Sign out' : 'Switch organization / sign out'}
           </button>
         </div>
       </aside>

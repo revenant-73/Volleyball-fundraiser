@@ -15,6 +15,8 @@ import { writeSnapshot } from './store.js';
 import { changeDues, createDuesRehearsal, duesExport, familySummary } from './dues.js';
 import {
   STRIPE_SANDBOX,
+  QA_COACH,
+  QA_DUES_ADMIN,
   assertSandboxDonationsOpen,
   attachCheckout,
   checkoutRecord,
@@ -52,6 +54,7 @@ export function createApp({
   if (pilot && !seed) throw new Error('Pilot requires an initialized database.');
   if (stripeSandbox && (pilot || seed?.mode !== STRIPE_SANDBOX))
     throw new Error('Stripe sandbox requires its isolated fictional fixture.');
+  const stripeQa = Boolean(stripeSandbox && hosted);
   let state;
   let links = {};
   let auth = seed?.auth;
@@ -233,10 +236,12 @@ export function createApp({
     });
   const validSession = (session) => {
     if (!session || session.expires < Date.now()) return false;
-    if (!pilot) return true;
+    if (!pilot && !stripeQa) return true;
     const user = service.state.users.find(
       (u) => u.id === session.userId && u.orgId === session.orgId,
     );
+    if (stripeQa)
+      return [QA_COACH, QA_DUES_ADMIN].includes(user?.role) && user.role === session.role;
     return !!user?.active && user.credentialVersion === session.credentialVersion;
   };
   app.use('/api/admin', (req, res, next) => {
@@ -250,8 +255,10 @@ export function createApp({
       return res.status(401).json({ error: 'Administrator sign-in required.' });
     req.session = session;
     if (pilot) req.session.role = service.state.users.find((u) => u.id === session.userId).role;
+    const endpoint = req.path.toLowerCase().replace(/\/+$/, '');
+    if (stripeQa && endpoint.endsWith('/dues-export') && session.role !== QA_DUES_ADMIN)
+      return res.status(403).json({ error: 'Sign in with the QA dues-admin account.' });
     if (stripeSandbox && !['GET', 'HEAD'].includes(req.method)) {
-      const endpoint = req.path.toLowerCase().replace(/\/+$/, '');
       if (
         req.method !== 'POST' ||
         !/^\/campaigns\/[^/]+\/(action|stop-donations|athletes\/[^/]+\/(invite|approve)|dues\/[^/]+)$/.test(
@@ -259,6 +266,9 @@ export function createApp({
         )
       )
         return res.status(403).json({ error: 'This sandbox has one fixed fictional campaign.' });
+      const requiredRole = /\/dues\/[^/]+$/.test(endpoint) ? QA_DUES_ADMIN : QA_COACH;
+      if (stripeQa && session.role !== requiredRole)
+        return res.status(403).json({ error: 'Use the QA account assigned to this action.' });
     }
     next();
   });
@@ -289,11 +299,11 @@ export function createApp({
       failed(err);
     }
   };
-  const campaignDetail = (orgId, id) => ({
-    ...service.detail(orgId, id, links),
+  const campaignDetail = (orgId, id, role) => ({
+    ...service.detail(orgId, id, role === QA_DUES_ADMIN ? {} : links),
     ...(stripeSandbox ? { checkoutsToClose: pendingSandboxCheckouts(service, id).length } : {}),
   });
-  const detail = (req) => campaignDetail(req.session.orgId, req.params.id);
+  const detail = (req) => campaignDetail(req.session.orgId, req.params.id, req.session.role);
   app.get(
     '/api/runtime',
     route(() =>
@@ -338,6 +348,7 @@ export function createApp({
       if (attempt.count > 15)
         throw new AppError('Too many sign-in attempts. Try again in a minute.', 429);
       const session = service.login(req.body.email, req.body.password);
+      if (stripeQa) session.role = service.state.users.find((u) => u.id === session.userId).role;
       if (pilot) {
         const user = service.state.users.find((u) => u.id === session.userId);
         if (!user.active) throw new AppError('Email or password is incorrect.', 401);
@@ -397,11 +408,11 @@ export function createApp({
             ),
           }
         : stripeSandbox
-          ? { mode: STRIPE_SANDBOX }
+          ? { mode: STRIPE_SANDBOX, ...(stripeQa ? { qaRole: req.session.role } : {}) }
           : {}),
       campaigns: service.state.campaigns
         .filter((c) => c.orgId === req.session.orgId)
-        .map((c) => campaignDetail(c.orgId, c.id)),
+        .map((c) => campaignDetail(c.orgId, c.id, req.session.role)),
     })),
   );
   if (pilot) {
