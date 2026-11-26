@@ -254,7 +254,7 @@ export function createStripeSandboxClient({ key, webhookSecret, origin, httpClie
               providerId(dispute.charge) !== charge.id ||
               dispute.currency !== 'usd' ||
               !usdCents(dispute.amount) ||
-              !/^dp_[a-z0-9]+$/i.test(dispute.id || '')
+              !/^du_[a-z0-9]+$/i.test(dispute.id || '')
             )
               throw new AppError('Stripe dispute does not match the original charge.', 409);
             disputes.push({ id: dispute.id, status: dispute.status, amountCents: dispute.amount });

@@ -251,7 +251,7 @@ test('signed Stripe lifecycle events distinguish declines, expiry, stops and dis
     else disputed.disputes[index] = item;
     return item;
   };
-  const firstDispute = event('charge.dispute.created', setDispute('dp_win1', 'needs_response'));
+  const firstDispute = event('charge.dispute.created', setDispute('du_win1', 'needs_response'));
   disputeReadAvailable = false;
   await emit(firstDispute, 503);
   await emit(firstDispute, 503);
@@ -266,13 +266,13 @@ test('signed Stripe lifecycle events distinguish declines, expiry, stops and dis
   assert.equal((await balances()).disputedCents, 2500);
   assert.equal((await balances()).eligibleCents, 7180);
   assert.equal((await balances()).appliedCents, 9680);
-  await emit(event('charge.dispute.closed', setDispute('dp_win1', 'won')));
+  await emit(event('charge.dispute.closed', setDispute('du_win1', 'won')));
   assert.equal((await balances()).disputedCents, 0);
   assert.equal((await balances()).eligibleCents, 9680);
   assert.equal((await balances()).awaitingReversalCents, 0);
-  const oldDispute = event('charge.dispute.created', setDispute('dp_loss1', 'needs_response'));
+  const oldDispute = event('charge.dispute.created', setDispute('du_loss1', 'needs_response'));
   await emit(oldDispute);
-  const loss = event('charge.dispute.closed', setDispute('dp_loss1', 'lost'));
+  const loss = event('charge.dispute.closed', setDispute('du_loss1', 'lost'));
   await Promise.all([emit(loss), emit(loss)]);
   await emit(event('charge.dispute.updated', oldDispute.data.object));
   assert.equal((await balances()).appliedCents, 7180);

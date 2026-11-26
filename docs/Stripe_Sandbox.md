@@ -60,7 +60,7 @@ npm run rehearse:stripe-handoff
 
 The runner uses four independent browser sessions and creates one fictional campaign in a new local data directory per run. It verifies the methods Stripe actually enables, pays with a test card, posts net dues credit, issues a partial refund, records the reversal receipt, and stops a second checkout. The coach and dues admin sessions use the same demo account in this sandbox.
 
-New sandbox Checkout Sessions allow only cards and disable Link. RallyFund checks that Stripe returned those settings before it gives the donor a Checkout URL. Delayed bank settlement remains unverified with the current provider sandbox, and the first proposed family release uses cards. Complete provider dispute resolution in a sandbox with dispute access before live collection.
+New sandbox Checkout Sessions allow only cards and disable Link. RallyFund checks that Stripe returned those settings before it gives the donor a Checkout URL. Delayed bank settlement remains unverified, and the first proposed family release uses cards.
 
 ## Verified on November 24, 2026
 
@@ -78,4 +78,13 @@ The lifecycle regression uses signed webhook deliveries and fictional Stripe API
 
 The automated handoff verified that Stripe returned only `card` with Link disabled. The fictional donor paid $100, the admin posted $96.80 after the $3.20 Stripe fee, and the $25 refund reduced the credit to $71.80. The admin recorded the reversal receipt. The coach's stop expired a second, unpaid checkout and blocked a fresh checkout request.
 
-An existing TVVC Stripe test credential could list disputes. The temporary rehearsal key returned a permission error. Dashboard sign-in is needed to confirm whether the TVVC credential belongs to a dedicated sandbox and whether that environment can submit dispute evidence. No disputes were modified in the TVVC test environment.
+An existing TVVC Stripe test credential could list disputes. The temporary rehearsal key returned a permission error.
+
+## Verified on November 26, 2026
+
+TVVC's Stripe Dashboard showed only its standard Test mode and zero dedicated sandboxes. The existing TVVC test credential matched that environment and could read disputes and submit simulated evidence. The rehearsal used two new fictional gifts and a local dues ledger.
+
+- **Won dispute.** Stripe opened a $100 dispute and RallyFund held the entire gift. A Stripe close event released the hold and restored $96.80 in eligible credit after the $3.20 processing fee.
+- **Lost dispute.** RallyFund posted $96.80 from a separate $100 gift. A $25 partial refund reduced the posted credit to $71.80 and triggered a dispute on the remaining $75. Stripe closed that dispute as lost. RallyFund reduced posted credit to $0 and recorded one $71.80 dispute reversal alongside the earlier $25 refund reversal. Replaying the Stripe close event twice added no entries. Both reversals awaited external reconciliation in the fictional ledger.
+
+The rehearsal exposed a validation error on Stripe's `du_` dispute IDs. After correcting it, replaying the original Checkout event through the local webhook recovered the hold from Stripe's current state. The dispute closures then reached RallyFund through the Stripe CLI listener.
