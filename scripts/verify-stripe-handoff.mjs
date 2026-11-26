@@ -1,18 +1,23 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { chromium, expect } from '@playwright/test';
 import Stripe from 'stripe';
 import { createApp } from '../server/app.js';
-import { createStripeSandboxClient, stripeSandboxEvents } from '../server/stripe-client.js';
+import {
+  createStripeSandboxClient,
+  stripeSandboxEvents,
+  STRIPE_QA_ORIGIN,
+} from '../server/stripe-client.js';
 import { createStripeSandboxSeed } from '../server/stripe-sandbox.js';
 
 const key = process.env.RALLYFUND_STRIPE_TEST_KEY;
+const hostedQa = process.argv.includes('--hosted-qa');
 if (!/^(?:[rs]k|rkcs)_test_[a-zA-Z0-9]+$/.test(key || ''))
   throw new Error('Set a Stripe sandbox test key before running this rehearsal.');
-if (!existsSync('dist/index.html'))
+if (!hostedQa && !existsSync('dist/index.html'))
   throw new Error('Build RallyFund before running the rehearsal.');
 
 const stripe = new Stripe(key);
@@ -21,7 +26,9 @@ const directory = `.local/stripe-handoff-rehearsals/${randomUUID()}`;
 const cli =
   process.env.RALLYFUND_STRIPE_CLI ||
   (existsSync('.local/stripe-tools/stripe.exe') ? '.local/stripe-tools/stripe.exe' : 'stripe');
-const credentials = { email: 'coach@tvvc.example', password: 'prototype-only' };
+const credentials = hostedQa
+  ? JSON.parse(readFileSync('.local/hosted-stripe-qa-credentials.json', 'utf8'))
+  : { email: 'coach@tvvc.example', password: 'prototype-only' };
 let browser,
   listener,
   stage = 'starting the isolated sandbox';
@@ -66,7 +73,8 @@ async function listenForStripe(origin) {
 }
 
 async function checked(response, expected = 200) {
-  assert.equal(response.status(), expected);
+  const status = typeof response.status === 'function' ? response.status() : response.status;
+  assert.equal(status, expected);
   return response.json();
 }
 
@@ -95,17 +103,28 @@ async function enterTestCard(page, cardholder) {
 }
 
 try {
-  server.listen(0, '127.0.0.1');
-  await new Promise((resolve, reject) => server.once('listening', resolve).once('error', reject));
-  const origin = `http://127.0.0.1:${server.address().port}`;
-  const webhookSecret = await listenForStripe(origin);
-  const { app } = createApp({
-    directory,
-    seed: createStripeSandboxSeed(),
-    allowedOrigins: [origin],
-    stripeSandbox: createStripeSandboxClient({ key, webhookSecret, origin }),
-  });
-  server.on('request', app);
+  let origin = STRIPE_QA_ORIGIN;
+  if (hostedQa) {
+    const [account, runtime] = await Promise.all([
+      stripe.accounts.retrieve(),
+      checked(await fetch(origin + '/api/runtime')),
+    ]);
+    assert.equal(account.id, 'acct_1Ug4IXFhylwvGQuf');
+    assert.deepEqual(runtime, { hosted: true, simulation: true, mode: 'stripe-sandbox' });
+    assert.deepEqual(await checked(await fetch(origin + '/api/examples')), { campaigns: [] });
+  } else {
+    server.listen(0, '127.0.0.1');
+    await new Promise((resolve, reject) => server.once('listening', resolve).once('error', reject));
+    origin = `http://127.0.0.1:${server.address().port}`;
+    const webhookSecret = await listenForStripe(origin);
+    const { app } = createApp({
+      directory,
+      seed: createStripeSandboxSeed(),
+      allowedOrigins: [origin],
+      stripeSandbox: createStripeSandboxClient({ key, webhookSecret, origin }),
+    });
+    server.on('request', app);
+  }
   const headers = { Origin: origin, 'X-Prototype': 'local' };
   browser = await chromium.launch({ headless: false });
   const coach = await browser.newPage({ viewport: { width: 390, height: 844 } });
@@ -116,12 +135,18 @@ try {
   const donor = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const admin = await browser.newPage({ viewport: { width: 390, height: 844 } });
   const login = async (page) =>
-    checked(await page.request.post(origin + '/api/login', { headers, data: credentials }));
+    checked(
+      await page.request.post(origin + '/api/login', {
+        headers,
+        data: { email: credentials.email, password: credentials.password },
+      }),
+    );
   const campaign = async (page) =>
     (await checked(await page.request.get(origin + '/api/admin'))).campaigns[0];
 
   stage = 'coach issues the link and approves the fictional player';
   await login(coach);
+  assert.equal((await checked(await coach.request.get(origin + '/api/admin'))).campaigns.length, 1);
   const initial = await campaign(coach);
   const athlete = initial.athletes[0];
   await coach.goto(origin + '/admin');
@@ -137,6 +162,12 @@ try {
   await player.getByRole('button', { name: 'Done →', exact: true }).click();
   await expect(player.getByRole('heading', { name: 'Waiting for coach approval' })).toBeVisible();
   await expect(player.getByLabel('Public fundraising URL')).toHaveCount(0);
+  assert.equal(
+    (
+      await donor.request.get(`${origin}/api/public/${initial.slug}?athlete=${athlete.id}`)
+    ).status(),
+    404,
+  );
   await coach.reload();
   await coach.getByRole('button', { name: 'Athletes', exact: true }).click();
   await coach.locator('.athlete-detail > summary').click();
@@ -272,7 +303,7 @@ try {
       finalCreditCents: netCents - 2500,
       reversalMatched: true,
       checkoutStopped: true,
-      localEvidence: directory,
+      ...(hostedQa ? { hosted: true } : { localEvidence: directory }),
     }),
   );
 } catch (error) {

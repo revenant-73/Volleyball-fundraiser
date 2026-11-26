@@ -2,10 +2,36 @@ import { getDatabase } from '@netlify/database';
 import { createHostedHandler } from '../../server/hosted.js';
 import { createPilotHandler } from '../../server/pilot/handler.js';
 import { hostedPilotResources } from '../../server/pilot/host.js';
+import { createStripeSandboxClient, STRIPE_QA_ORIGIN } from '../../server/stripe-client.js';
+import { assertStripeQaContext, STRIPE_QA_MODE, STRIPE_QA_SITE } from '../../server/stripe-qa.js';
 
 let pool;
+let qaStripe;
 export default async (request, context) => {
   const mode = Netlify.env.get('RALLYFUND_MODE') || 'review';
+  if (mode === STRIPE_QA_MODE || context.site?.id === STRIPE_QA_SITE) {
+    try {
+      assertStripeQaContext(mode, context, new URL(request.url).origin);
+      qaStripe ||= createStripeSandboxClient({
+        key: Netlify.env.get('RALLYFUND_STRIPE_TEST_KEY'),
+        webhookSecret: Netlify.env.get('RALLYFUND_STRIPE_WEBHOOK_SECRET'),
+        origin: STRIPE_QA_ORIGIN,
+      });
+      await qaStripe.verifyQaAccount();
+      pool ||= getDatabase().pool;
+      return createHostedHandler({
+        pool,
+        password: Netlify.env.get('RALLYFUND_QA_PASSWORD'),
+        origins: [STRIPE_QA_ORIGIN],
+        stripeSandbox: qaStripe,
+      })(request, context);
+    } catch {
+      return Response.json(
+        { error: 'RallyFund QA is unavailable or this host is not authorized.' },
+        { status: 503, headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } },
+      );
+    }
+  }
   if (mode !== 'review') {
     try {
       const { client, services } = hostedPilotResources(context, new URL(request.url).origin);

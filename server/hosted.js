@@ -3,11 +3,12 @@ import { randomBytes, scryptSync } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { createApp } from './app.js';
 import { createSeed, hash } from './domain.js';
+import { createStripeSandboxSeed } from './stripe-sandbox.js';
 
 // One locked snapshot deliberately reuses the tested milestone domain model.
 // The database serializes writers across function instances; responses leave
 // only after COMMIT, including login cookies and idempotency capabilities.
-export async function transactSnapshot(pool, initial, operation) {
+export async function transactSnapshot(pool, initial, operation, snapshotId = 'review-v1') {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -15,16 +16,16 @@ export async function transactSnapshot(pool, initial, operation) {
     await client.query("SET LOCAL lock_timeout = '10000'");
     let result = await client.query(
       'SELECT snapshot FROM fundraiser_review_state WHERE id = $1 FOR UPDATE',
-      ['review-v1'],
+      [snapshotId],
     );
     if (!result.rows.length) {
       await client.query(
         'INSERT INTO fundraiser_review_state (id, snapshot) VALUES ($1, $2::jsonb) ON CONFLICT (id) DO NOTHING',
-        ['review-v1', JSON.stringify(initial())],
+        [snapshotId, JSON.stringify(initial())],
       );
       result = await client.query(
         'SELECT snapshot FROM fundraiser_review_state WHERE id = $1 FOR UPDATE',
-        ['review-v1'],
+        [snapshotId],
       );
     }
     const snapshot = result.rows[0].snapshot;
@@ -34,7 +35,7 @@ export async function transactSnapshot(pool, initial, operation) {
     if (!isDeepStrictEqual(before, outcome.snapshot))
       await client.query(
         'UPDATE fundraiser_review_state SET snapshot = $2::jsonb, revision = revision + 1, updated_at = now() WHERE id = $1',
-        ['review-v1', after],
+        [snapshotId, after],
       );
     await client.query('COMMIT');
     return outcome.response;
@@ -64,17 +65,20 @@ const errorResponse = (message) =>
     { status: 503, headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' } },
   );
 
-export function createHostedHandler({ pool, password, origins }) {
+export function createHostedHandler({ pool, password, origins, stripeSandbox = null }) {
+  const label = stripeSandbox ? 'Hosted QA' : 'Hosted review';
   return async (request, context = {}) => {
     // Never fall back to published local credentials or ephemeral storage.
     if (!password || password.length < 24)
-      return errorResponse(
-        'Hosted review access is not configured. Contact the project administrator.',
-      );
+      return errorResponse(`${label} access is not configured. Contact the project administrator.`);
     const url = new URL(request.url);
     if (!origins.includes(url.origin)) return new Response('Unknown review host.', { status: 403 });
-    const body = ['GET', 'HEAD'].includes(request.method) ? '' : await request.text();
-    if (Buffer.byteLength(body) > 3 * 1024 * 1024)
+    const signedEvent =
+      stripeSandbox && request.method === 'POST' && url.pathname === '/api/stripe-sandbox/webhook';
+    const body = ['GET', 'HEAD'].includes(request.method)
+      ? Buffer.alloc(0)
+      : Buffer.from(await request.arrayBuffer());
+    if (body.length > 3 * 1024 * 1024)
       return Response.json(
         { error: 'Request exceeds the prototype upload limit.' },
         { status: 413 },
@@ -82,7 +86,7 @@ export function createHostedHandler({ pool, password, origins }) {
     try {
       return await transactSnapshot(
         pool,
-        () => createSeed(),
+        stripeSandbox ? createStripeSandboxSeed : createSeed,
         async (snapshot) => {
           protectReview(snapshot, password);
           const runtime = createApp({
@@ -90,6 +94,7 @@ export function createHostedHandler({ pool, password, origins }) {
             hosted: true,
             allowedOrigins: origins,
             staticFiles: false,
+            stripeSandbox,
           });
           const result = await serverless(runtime.app)(
             {
@@ -97,8 +102,8 @@ export function createHostedHandler({ pool, password, origins }) {
               rawPath: url.pathname,
               rawQueryString: url.search.slice(1),
               headers: Object.fromEntries(request.headers),
-              body,
-              isBase64Encoded: false,
+              body: body.toString(signedEvent ? 'base64' : 'utf8'),
+              isBase64Encoded: Boolean(signedEvent),
               requestContext: {
                 http: { method: request.method, sourceIp: context.ip || 'unknown' },
               },
@@ -120,12 +125,15 @@ export function createHostedHandler({ pool, password, origins }) {
             }),
           };
         },
+        stripeSandbox ? 'stripe-qa-v1' : 'review-v1',
       );
     } catch (error) {
       // Connection strings, payloads, URLs, contact lists and capabilities must
       // never enter logs. An unavailable DB fails closed, preserving old state.
-      console.error('Hosted review storage failure', { name: error.name, code: error.code });
-      return errorResponse('Review storage is temporarily unavailable. Please retry.');
+      console.error(`${label} storage failure`, { name: error.name, code: error.code });
+      return errorResponse(
+        `${stripeSandbox ? 'QA' : 'Review'} storage is temporarily unavailable. Please retry.`,
+      );
     }
   };
 }

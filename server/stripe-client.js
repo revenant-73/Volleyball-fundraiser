@@ -1,6 +1,9 @@
 import Stripe from 'stripe';
 import { AppError } from './domain.js';
 
+export const STRIPE_QA_ORIGIN = 'https://rallyfund-tvvc-qa.netlify.app';
+const STRIPE_QA_ACCOUNT = 'acct_1Ug4IXFhylwvGQuf';
+
 const sessionEvents = new Set([
   'checkout.session.completed',
   'checkout.session.async_payment_succeeded',
@@ -34,10 +37,29 @@ export function createStripeSandboxClient({ key, webhookSecret, origin, httpClie
   )
     throw new Error('Stripe sandbox mode requires a test API key and a webhook signing secret.');
   const url = new URL(origin);
-  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.origin !== origin)
-    throw new Error('Stripe sandbox Checkout must return to the local RallyFund app.');
+  const hostedQa = origin === STRIPE_QA_ORIGIN;
+  if (
+    !hostedQa &&
+    (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.origin !== origin)
+  )
+    throw new Error('Stripe sandbox Checkout must return to RallyFund QA or the local app.');
   const stripe = new Stripe(key, { maxNetworkRetries: 2, timeout: 10000, httpClient });
+  let qaIdentity;
   return {
+    verifyQaAccount() {
+      if (!hostedQa) throw new Error('Hosted QA credentials are required.');
+      qaIdentity ??= stripe.accounts
+        .retrieve()
+        .then(({ id }) => {
+          if (id !== STRIPE_QA_ACCOUNT)
+            throw new Error('Stripe account does not match RallyFund QA.');
+        })
+        .catch((error) => {
+          qaIdentity = null;
+          throw error;
+        });
+      return qaIdentity;
+    },
     async createCheckout(donation, campaignSlug) {
       const metadata = {
         rallyfund_donation_id: donation.id,

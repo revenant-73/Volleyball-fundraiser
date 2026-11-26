@@ -50,8 +50,8 @@ export function createApp({
   stripeSandbox = null,
 } = {}) {
   if (pilot && !seed) throw new Error('Pilot requires an initialized database.');
-  if (stripeSandbox && (hosted || pilot || seed?.mode !== STRIPE_SANDBOX))
-    throw new Error('Stripe sandbox requires its isolated local fixture.');
+  if (stripeSandbox && (pilot || seed?.mode !== STRIPE_SANDBOX))
+    throw new Error('Stripe sandbox requires its isolated fictional fixture.');
   let state;
   let links = {};
   let auth = seed?.auth;

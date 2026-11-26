@@ -11,7 +11,7 @@ Start with a small group of consenting families, one campaign and one payment me
 3. Approve the live financial rules, disclosures, consent, retention and recovery procedures. Record who monitors payments, resolves exceptions and can pause collection. Verify a current recovery file and assign a custodian for credential renewal.
 4. Obtain explicit approval to open the named campaign to the selected families. Expand after comparing settled payments, actual fees, posted dues credits and any refunds with the club's records.
 
-The [local Stripe rehearsal](Stripe_Sandbox.md) covers signed confirmation, actual fees, duplicate delivery, refunds, failed and expired checkouts, disputes and settlement after a stop. Card-only Checkout and both dispute outcomes passed in the dedicated RallyFund QA sandbox. Delayed bank settlement still needs a Stripe test environment with the applicable payment method. Live configuration and launch approval remain open.
+The [Stripe rehearsals](Stripe_Sandbox.md) cover signed confirmation, actual fees, duplicate delivery, refunds, failed and expired checkouts, disputes and settlement after a stop. The isolated hosted QA site passed coach approval, link sharing, card-only Checkout, dues posting and stopping donations with the dedicated RallyFund QA sandbox. Both dispute outcomes passed in the local rehearsal against that sandbox. Delayed bank settlement still needs a Stripe test environment with the applicable payment method. Live configuration and launch approval remain open.
 
 ## Organization configuration
 

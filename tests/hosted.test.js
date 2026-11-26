@@ -2,10 +2,37 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NetlifyDB } from '@netlify/database-dev';
 import pg from 'pg';
+import Stripe from 'stripe';
 import { createHostedHandler, transactSnapshot } from '../server/hosted.js';
+import { createStripeSandboxClient, STRIPE_QA_ORIGIN } from '../server/stripe-client.js';
+import { assertStripeQaContext, STRIPE_QA_MODE, STRIPE_QA_SITE } from '../server/stripe-qa.js';
 
 const origin = 'https://review.example.test';
 const password = 'fictional-review-password-for-tests';
+
+test('Stripe QA accepts only the published dedicated site and canonical host', () => {
+  const context = {
+    site: { id: STRIPE_QA_SITE, url: STRIPE_QA_ORIGIN },
+    deploy: { context: 'production', published: true },
+  };
+  assert.doesNotThrow(() => assertStripeQaContext(STRIPE_QA_MODE, context, STRIPE_QA_ORIGIN));
+  assert.throws(() => assertStripeQaContext('review', context, STRIPE_QA_ORIGIN));
+  assert.throws(() => assertStripeQaContext(STRIPE_QA_MODE, context, origin));
+  assert.throws(() =>
+    assertStripeQaContext(
+      STRIPE_QA_MODE,
+      { ...context, site: { ...context.site, id: 'other' } },
+      STRIPE_QA_ORIGIN,
+    ),
+  );
+  assert.throws(() =>
+    assertStripeQaContext(
+      STRIPE_QA_MODE,
+      { ...context, deploy: { ...context.deploy, published: false } },
+      STRIPE_QA_ORIGIN,
+    ),
+  );
+});
 
 test('hosted API transactions, cold starts, capabilities and access control', async (t) => {
   const database = new NetlifyDB({ logger: () => {} });
@@ -34,6 +61,69 @@ test('hosted API transactions, cold starts, capabilities and access control', as
       { ip: '192.0.2.10' },
     );
   const detail = async () => (await (await request('/api/admin')).json()).campaigns[0];
+
+  await t.test(
+    'uses isolated QA data, secure cookies, and byte-exact Stripe signatures',
+    async () => {
+      const key = 'sk_test_fixture';
+      const webhookSecret = 'whsec_testfixture';
+      const stripeSandbox = createStripeSandboxClient({
+        key,
+        webhookSecret,
+        origin: STRIPE_QA_ORIGIN,
+      });
+      const stripe = new Stripe(key);
+      const qa = createHostedHandler({
+        pool,
+        password,
+        origins: [STRIPE_QA_ORIGIN],
+        stripeSandbox,
+      });
+      const qaRequest = (path, method = 'GET', body, extra = {}) =>
+        qa(
+          new Request(STRIPE_QA_ORIGIN + path, {
+            method,
+            body,
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Prototype': 'local',
+              Origin: STRIPE_QA_ORIGIN,
+              ...extra,
+            },
+          }),
+        );
+      const login = await qaRequest(
+        '/api/login',
+        'POST',
+        JSON.stringify({ email: 'coach@tvvc.example', password }),
+      );
+      assert.equal(login.status, 200);
+      assert.match(login.headers.get('set-cookie'), /Secure/);
+      const cookie = login.headers.get('set-cookie').split(';')[0];
+      const detail = await (await qaRequest('/api/admin', 'GET', undefined, { cookie })).json();
+      assert.equal(detail.campaigns.length, 1);
+      assert.equal(detail.campaigns[0].athletes[0].approved, false);
+      assert.deepEqual(detail.campaigns[0].contacts, []);
+      assert.equal((await request('/api/admin', 'GET', undefined, { cookie })).status, 401);
+      const event =
+        '{"id":"evt_fixture","type":"customer.created","livemode":false,"data":{"object":{"id":"cus_fixture","name":"Fictional Á"}}}\n';
+      const webhook = '/api/stripe-sandbox/webhook';
+      assert.equal(
+        (await qaRequest(webhook, 'POST', event, { Origin: '', 'Stripe-Signature': 'invalid' }))
+          .status,
+        401,
+      );
+      const signature = stripe.webhooks.generateTestHeaderString({
+        payload: event,
+        secret: webhookSecret,
+      });
+      assert.equal(
+        (await qaRequest(webhook, 'POST', event, { Origin: '', 'Stripe-Signature': signature }))
+          .status,
+        200,
+      );
+    },
+  );
 
   await t.test(
     'fails closed without configured access and rejects foreign/missing origins',
