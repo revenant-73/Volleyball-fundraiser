@@ -4,7 +4,7 @@ This is an isolated local mode. It binds to loopback and seeds one draft TVVC ca
 
 ## Run the rehearsal
 
-Use a dedicated Stripe sandbox and a sandbox restricted key with Checkout Session write/read and payment, refund, and dispute read access. Use the Stripe CLI to forward the events below and take the signing secret from that listener. The operator running test refunds or submitting test dispute evidence needs the corresponding write permission.
+Use TVVC's dedicated **RallyFund QA** sandbox and a sandbox restricted key with Checkout Session write/read and payment, refund, and dispute read access. Use the Stripe CLI to forward the events below and take the signing secret from that listener. The operator running test refunds or submitting test dispute evidence needs the corresponding write permission.
 
 ```powershell
 $events = @(
@@ -88,3 +88,11 @@ TVVC's Stripe Dashboard showed only its standard Test mode and zero dedicated sa
 - **Lost dispute.** RallyFund posted $96.80 from a separate $100 gift. A $25 partial refund reduced the posted credit to $71.80 and triggered a dispute on the remaining $75. Stripe closed that dispute as lost. RallyFund reduced posted credit to $0 and recorded one $71.80 dispute reversal alongside the earlier $25 refund reversal. Replaying the Stripe close event twice added no entries. Both reversals awaited external reconciliation in the fictional ledger.
 
 The rehearsal exposed a validation error on Stripe's `du_` dispute IDs. After correcting it, replaying the original Checkout event through the local webhook recovered the hold from Stripe's current state. The dispute closures then reached RallyFund through the Stripe CLI listener.
+
+### Dedicated RallyFund QA sandbox
+
+Created **RallyFund QA** under TVVC with live-account copying turned off. The local verifier checked that the test key belonged to the new sandbox before running the rehearsals.
+
+- **Card-only handoff.** Stripe returned `card` as the sole payment method and Link disabled. The $100 gift posted $96.80 after fees. A $25 refund reduced the posted credit to $71.80, and the admin recorded the reversal receipt. Stopping donations expired a separate unpaid checkout and blocked new checkout requests.
+- **Won dispute.** Stripe closed a $100 dispute as won. RallyFund lifted the hold and restored $96.80 in eligible credit.
+- **Lost dispute.** The $25 refund on a separate $100 gift left $71.80 posted and triggered a $75 dispute. Stripe closed the dispute as lost. RallyFund reversed the remaining $71.80, leaving $0 posted. Two replays of the close event added no reversal.
